@@ -111,6 +111,10 @@ console.log('#20/#22/#26/#28 smoke')
   assert(classifySnapshotText('').status === 'missing', 'empty => missing')
   assert(classifySnapshotText('{not-json').status === 'unreadable', 'broken => unreadable')
 
+  const base = store({
+    books: [book({ id: 'b1', title: 'Shared' })],
+    entries: [entry({ id: 'e1', bookId: 'b1', date: '2026-05-01', body: 'v1', updatedAt: '2026-05-01T10:00:00.000Z' })],
+  })
   const remote = store({
     books: [book({ id: 'b1', title: 'Shared' })],
     entries: [entry({ id: 'e1', bookId: 'b1', date: '2026-05-01', body: 'v1', updatedAt: '2026-05-01T10:00:00.000Z' })],
@@ -119,8 +123,21 @@ console.log('#20/#22/#26/#28 smoke')
     books: [book({ id: 'b1', title: 'Shared' })],
     entries: [entry({ id: 'e1', bookId: 'b1', date: '2026-05-01', body: 'v2', updatedAt: '2026-05-01T11:00:00.000Z' })],
   })
-  const ordinary = mergeStores(local, remote)
-  assert(ordinary.entries.length === 1 && !isConflictId(ordinary.entries[0].id), 'ordinary edit has no conflict copy')
+  const ordinary = mergeStores(local, remote, base)
+  assert(ordinary.entries.length === 1 && !isConflictId(ordinary.entries[0].id), 'ordinary edit with base has no conflict copy')
+
+  const firstConnect = mergeStores(
+    store({
+      books: [book({ id: 'b1', title: 'Shared' })],
+      entries: [entry({ id: 'e1', bookId: 'b1', date: '2026-05-01', body: 'LOCAL TEXT', updatedAt: '2026-05-01T02:00:00.000Z' })],
+    }),
+    store({
+      books: [book({ id: 'b1', title: 'Shared' })],
+      entries: [entry({ id: 'e1', bookId: 'b1', date: '2026-05-01', body: 'REMOTE TEXT', updatedAt: '2026-05-01T05:00:00.000Z' })],
+    }),
+  )
+  const firstBodies = firstConnect.entries.map((item) => item.body).join('\n')
+  assert(/LOCAL TEXT/.test(firstBodies) && /REMOTE TEXT/.test(firstBodies), 'unknown-base divergent same-id keeps both texts')
 
   const deleted = mergeStores(
     store({ books: [book({ id: 'b1', title: 'Shared' })], deletedEntries: [{ id: 'e1', deletedAt: '2026-05-01T06:00:00.000Z' }] }),
@@ -131,7 +148,7 @@ console.log('#20/#22/#26/#28 smoke')
   )
   assert(deleted.entries.length === 0, 'tombstone beats fast-clock remote stamp')
 
-  const base = store({
+  const concurrentBase = store({
     books: [book({ id: 'b1', title: 'Shared' })],
     entries: [entry({ id: 'e1', bookId: 'b1', date: '2026-05-01', body: 'base', updatedAt: '2026-05-01T01:00:00.000Z' })],
   })
@@ -144,7 +161,7 @@ console.log('#20/#22/#26/#28 smoke')
       books: [book({ id: 'b1', title: 'Shared' })],
       entries: [entry({ id: 'e1', bookId: 'b1', date: '2026-05-01', body: 'B', updatedAt: '2026-05-01T09:00:00.000Z' })],
     }),
-    base,
+    concurrentBase,
   )
   const bodies = concurrent.entries.map((item) => item.body)
   assert(bodies.includes('A') && bodies.includes('B'), 'concurrent edits with base keep both bodies')

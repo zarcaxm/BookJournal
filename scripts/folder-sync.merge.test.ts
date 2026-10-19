@@ -40,10 +40,22 @@ const store = (over: Partial<Store> = {}): Store => ({
   ...over,
 })
 
-test('blocker1-adjacent: ordinary edit has no conflict without concurrent base', () => {
+test('unknown base: divergent same-id keeps LOCAL and REMOTE text', () => {
+  const local = store({ books: [book()], entries: [entry({ body: 'LOCAL TEXT', updatedAt: T(2) })] })
+  const remote = store({ books: [book()], entries: [entry({ body: 'REMOTE TEXT', updatedAt: T(5) })] })
+  const m = mergeStores(local, remote)
+  const bodies = m.entries.map((e) => e.body).join('\n')
+  assert.match(bodies, /LOCAL TEXT/)
+  assert.match(bodies, /REMOTE TEXT/)
+  assert.equal(m.entries.find((e) => e.id === 'e1')?.body, 'REMOTE TEXT')
+  assert.ok(m.entries.some((e) => isConflictId(e.id) && e.body.includes('LOCAL TEXT')))
+})
+
+test('known base: ordinary local edit does not create a conflict', () => {
+  const base = store({ books: [book()], entries: [entry({ body: 'v1', updatedAt: T(1) })] })
   const remote = store({ books: [book()], entries: [entry({ body: 'v1', updatedAt: T(1) })] })
   const local = store({ books: [book()], entries: [entry({ body: 'v1 plus more', updatedAt: T(2) })] })
-  const m = mergeStores(local, remote)
+  const m = mergeStores(local, remote, base)
   assert.equal(m.entries.filter((e) => isConflictId(e.id)).length, 0)
   assert.equal(m.entries[0]?.body, 'v1 plus more')
 })

@@ -446,10 +446,13 @@ export function mergeStores(local: Store, remote: Store, base: Store | null = nu
         continue
       }
 
+      // With a known base: only one side changed → take that side (ordinary edit, no conflict).
+      // With no base (first connect / lost meta): ancestry is unknown → keep both texts.
       const localChanged = !base || changedFromBase(left, baseEntries.get(id))
       const remoteChanged = !base || changedFromBase(right, baseEntries.get(id))
+      const unknownAncestryOrBothChanged = !base || (localChanged && remoteChanged)
 
-      if (base && localChanged && remoteChanged) {
+      if (unknownAncestryOrBothChanged) {
         const winner = newerByUpdatedAt(left, right)
         const loser = winner === left ? right : left
         if (booksById.has(winner.bookId)) {
@@ -464,8 +467,7 @@ export function mergeStores(local: Store, remote: Store, base: Store | null = nu
         continue
       }
 
-      const chosen =
-        localChanged && !remoteChanged ? left : remoteChanged && !localChanged ? right : newerByUpdatedAt(left, right)
+      const chosen = localChanged ? left : right
       if (booksById.has(chosen.bookId)) entriesById.set(id, chosen)
       continue
     }

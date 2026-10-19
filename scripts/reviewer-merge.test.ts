@@ -72,9 +72,11 @@ test('#20 newer book change from another device wins', () => {
 })
 
 test('BLOCKER: a normal single-device edit does not create a [Conflict] copy', () => {
+  // Ordinary edits are conflict-free only when a last-sync base is known.
+  const base = store({ books: [book()], entries: [entry({ body: 'v1', updatedAt: T(1) })] })
   const remote = store({ books: [book()], entries: [entry({ body: 'v1', updatedAt: T(1) })] })
   const local = store({ books: [book()], entries: [entry({ body: 'v1 plus more words', updatedAt: T(2) })] })
-  const m = mergeStores(local, remote)
+  const m = mergeStores(local, remote, base)
   assert.equal(conflicts(m).length, 0)
   assert.equal(m.entries.length, 1)
   assert.equal(m.entries[0].body, 'v1 plus more words')
@@ -82,16 +84,26 @@ test('BLOCKER: a normal single-device edit does not create a [Conflict] copy', (
 
 test('BLOCKER: published entry edit does not duplicate the manuscript', () => {
   const pub = { status: 'published' as const, publishedTitle: 'Day', publishedBody: 'v1', publishedAt: T(1) }
+  const base = store({ books: [book()], entries: [entry({ ...pub, body: 'v1', updatedAt: T(1) })] })
   const remote = store({ books: [book()], entries: [entry({ ...pub, body: 'v1', updatedAt: T(1) })] })
   const local = store({
     books: [book()],
     entries: [entry({ ...pub, publishedBody: 'v2', body: 'v2', updatedAt: T(2) })],
   })
-  const m = mergeStores(local, remote)
+  const m = mergeStores(local, remote, base)
   const manuscript = m.entries.filter(
     (e) => e.status === 'published' && Boolean(e.publishedBody?.trim() || e.publishedTitle?.trim()),
   )
   assert.equal(manuscript.length, 1)
+})
+
+test('first-connect / unknown base: divergent same-id keeps both texts', () => {
+  const local = store({ books: [book()], entries: [entry({ body: 'LOCAL TEXT', updatedAt: T(2) })] })
+  const remote = store({ books: [book()], entries: [entry({ body: 'REMOTE TEXT', updatedAt: T(5) })] })
+  const m = mergeStores(local, remote)
+  const bodies = m.entries.map((e) => e.body).join('\n')
+  assert.match(bodies, /LOCAL TEXT/)
+  assert.match(bodies, /REMOTE TEXT/)
 })
 
 test('#26 concurrent edits with a sync base keep both bodies', () => {
@@ -120,10 +132,11 @@ test('#28 merge of identical stores is a no-op', () => {
 })
 
 test('#28 after an ordinary edit merge, the next merge is stable', () => {
+  const base = store({ books: [book()], entries: [entry({ body: 'v1', updatedAt: T(1) })] })
   const remote = store({ books: [book()], entries: [entry({ body: 'v1', updatedAt: T(1) })] })
   const local = store({ books: [book()], entries: [entry({ body: 'v2', updatedAt: T(2) })] })
-  const m1 = mergeStores(local, remote)
-  const m2 = mergeStores(m1, m1)
+  const m1 = mergeStores(local, remote, base)
+  const m2 = mergeStores(m1, m1, base)
   assert.ok(sameStore(m1, m2))
   assert.equal(conflicts(m1).length, 0)
 })
