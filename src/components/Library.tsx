@@ -3,6 +3,7 @@ import { wordCount } from '../dates.ts'
 import { useJournal } from '../journal.tsx'
 import { coverOf, entryHasWriting, entryInBook, entryIsDirty, pagesOf, type Book } from '../types.ts'
 import { ConfirmDialog } from './ConfirmDialog.tsx'
+import { Menu } from './Menu.tsx'
 import { NewBookDialog } from './NewBookDialog.tsx'
 import { SyncStatus } from './SyncStatus.tsx'
 
@@ -27,12 +28,15 @@ function BookCard({ book, onDelete }: { book: Book; onDelete: (book: Book) => vo
         <span className="cover-title">{book.title}</span>
         <span className="cover-author">{book.author || 'Unsigned'}</span>
       </button>
-      <p className="volume-meta">
-        {pagesOf(book.pages).label} · {volumeLabel(published, drafts)}
-      </p>
-      <button type="button" className="text-button" onClick={() => onDelete(book)}>
-        Delete
-      </button>
+      <div className="volume-foot">
+        <p className="volume-meta">
+          {pagesOf(book.pages).label} · {volumeLabel(published, drafts)}
+        </p>
+        <Menu
+          label={`More actions for ${book.title}`}
+          items={[{ label: 'Delete book…', danger: true, onSelect: () => onDelete(book) }]}
+        />
+      </div>
     </article>
   )
 }
