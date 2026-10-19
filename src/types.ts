@@ -63,7 +63,12 @@ export type Store = {
 }
 
 export function isConflictId(id: string) {
-  return id.endsWith('__conflict')
+  return id.includes('__conflict')
+}
+
+export function rootEntryId(id: string) {
+  const index = id.indexOf('__conflict')
+  return index === -1 ? id : id.slice(0, index)
 }
 
 export function primaryEntryFor(entries: Entry[], bookId: string, date: string) {

@@ -1,9 +1,9 @@
 /**
- * Focused sync regression checks for folder-sync merge / snapshot classification.
+ * Focused sync regression checks. Prefer scripts/reviewer-merge.test.ts for the full suite.
  * Run: npx --yes tsx scripts/sync-regression.mts
  */
 import { classifySnapshotText, mergeStores, sameStore } from '../src/sync.ts'
-import type { Book, Entry, Store } from '../src/types.ts'
+import { isConflictId, primaryEntryFor, type Book, type Entry, type Store } from '../src/types.ts'
 
 let failed = 0
 
@@ -57,8 +57,6 @@ function store(partial: Partial<Store> = {}): Store {
 console.log('#16 tombstones keep deletions')
 {
   const local = store({
-    books: [],
-    entries: [],
     deletedBooks: [{ id: 'b1', deletedAt: '2026-02-01T00:00:00.000Z' }],
     deletedEntries: [{ id: 'e1', deletedAt: '2026-02-01T00:00:00.000Z' }],
   })
@@ -69,81 +67,20 @@ console.log('#16 tombstones keep deletions')
   const merged = mergeStores(local, remote)
   assert(merged.books.length === 0, 'deleted book stays deleted')
   assert(merged.entries.length === 0, 'deleted entry stays deleted')
-  assert(merged.deletedBooks.some((t) => t.id === 'b1'), 'book tombstone retained')
-  assert(merged.deletedEntries.some((t) => t.id === 'e1'), 'entry tombstone retained')
 }
 
-console.log('#18 same-day entries with different ids are both kept')
-{
-  const local = store({
-    books: [book({ id: 'b1', title: 'Shared' })],
-    entries: [entry({ id: 'local-day', bookId: 'b1', date: '2026-03-01', title: 'A', body: 'from A', updatedAt: '2026-03-01T10:00:00.000Z' })],
-  })
-  const remote = store({
-    books: [book({ id: 'b1', title: 'Shared' })],
-    entries: [entry({ id: 'remote-day', bookId: 'b1', date: '2026-03-01', title: 'B', body: 'from B', updatedAt: '2026-03-01T11:00:00.000Z' })],
-  })
-  const merged = mergeStores(local, remote)
-  const ids = new Set(merged.entries.map((item) => item.id))
-  assert(ids.has('local-day'), 'keeps local same-day entry')
-  assert(ids.has('remote-day'), 'keeps remote same-day entry')
-}
-
-console.log('#20 newer book updatedAt wins')
-{
-  const local = store({
-    books: [book({ id: 'b1', title: 'Local', pages: 'cream', updatedAt: '2026-01-01T00:00:00.000Z' })],
-  })
-  const remote = store({
-    books: [book({ id: 'b1', title: 'Remote', pages: 'ruled', updatedAt: '2026-02-01T00:00:00.000Z' })],
-  })
-  const merged = mergeStores(local, remote)
-  assert(merged.books[0]?.pages === 'ruled', 'remote book pages win on newer updatedAt')
-  assert(merged.books[0]?.title === 'Remote', 'remote book title wins on newer updatedAt')
-}
-
-console.log('#22 empty snapshot text is missing (recoverable)')
-{
-  assert(classifySnapshotText('').status === 'missing', 'empty string => missing')
-  assert(classifySnapshotText('   \n').status === 'missing', 'whitespace => missing')
-  assert(classifySnapshotText('{not-json').status === 'unreadable', 'broken json => unreadable')
-  const ready = classifySnapshotText(
-    JSON.stringify({ app: 'BookJournal', books: [], entries: [], savedAt: '2026-01-01T00:00:00.000Z' }),
-  )
-  assert(ready.status === 'ready', 'valid snapshot => ready')
-}
-
-console.log('#24 mergeStores is pure over prev (functional-update safe)')
-{
-  const prev = store({
-    books: [book({ id: 'b1', title: 'Local' })],
-    entries: [entry({ id: 'e-new', bookId: 'b1', date: '2026-04-01', title: 'Typing', updatedAt: '2026-04-01T12:00:00.000Z' })],
-  })
-  const remote = store({
-    books: [book({ id: 'b1', title: 'Local' })],
-    entries: [entry({ id: 'e-old', bookId: 'b1', date: '2026-03-01', title: 'Older', updatedAt: '2026-03-01T12:00:00.000Z' })],
-  })
-  const once = mergeStores(prev, remote)
-  const twice = mergeStores(prev, remote)
-  assert(sameStore(once, twice), 'mergeStores is deterministic')
-  assert(
-    once.entries.some((item) => item.id === 'e-new') && once.entries.some((item) => item.id === 'e-old'),
-    'functional merge onto prev keeps in-flight local entry and remote entry',
-  )
-}
-
-console.log('#26 divergent same-id edits keep a conflict copy')
+console.log('#18 same-day entries fold into one accessible entry')
 {
   const local = store({
     books: [book({ id: 'b1', title: 'Shared' })],
     entries: [
       entry({
-        id: 'e1',
+        id: 'local-day',
         bookId: 'b1',
-        date: '2026-05-01',
-        title: 'Local edit',
-        body: 'local body',
-        updatedAt: '2026-05-01T10:00:00.000Z',
+        date: '2026-03-01',
+        title: 'A',
+        body: 'from A',
+        updatedAt: '2026-03-01T10:00:00.000Z',
       }),
     ],
   })
@@ -151,40 +88,68 @@ console.log('#26 divergent same-id edits keep a conflict copy')
     books: [book({ id: 'b1', title: 'Shared' })],
     entries: [
       entry({
-        id: 'e1',
+        id: 'remote-day',
         bookId: 'b1',
-        date: '2026-05-01',
-        title: 'Remote edit',
-        body: 'remote body',
-        updatedAt: '2026-05-01T11:00:00.000Z',
+        date: '2026-03-01',
+        title: 'B',
+        body: 'from B',
+        updatedAt: '2026-03-01T11:00:00.000Z',
       }),
     ],
   })
   const merged = mergeStores(local, remote)
-  const winner = merged.entries.find((item) => item.id === 'e1')
-  const conflict = merged.entries.find((item) => item.id === 'e1__conflict')
-  assert(winner?.title === 'Remote edit', 'newer updatedAt wins primary id')
-  assert(Boolean(conflict), 'loser preserved as conflict copy')
-  assert(conflict?.title.startsWith('[Conflict] '), 'conflict title is marked')
-  assert(conflict?.body === 'local body', 'conflict copy keeps losing body')
+  const shown = primaryEntryFor(merged.entries, 'b1', '2026-03-01')
+  assert(merged.entries.filter((item) => !isConflictId(item.id)).length === 1, 'one primary entry per day')
+  assert(Boolean(shown && /from A/.test(shown.body) && /from B/.test(shown.body)), 'composer sees both texts')
 }
 
-console.log('#28 skip write when merged equals remote')
+console.log('#20/#22/#26/#28 smoke')
 {
-  const local = store({
-    books: [book({ id: 'b1', title: 'Book', updatedAt: '2026-01-01T00:00:00.000Z' })],
-    entries: [entry({ id: 'e1', bookId: 'b1', date: '2026-01-02', title: 'Old', updatedAt: '2026-01-02T00:00:00.000Z' })],
-  })
+  const stale = store({ books: [book({ id: 'b1', title: 'Local', pages: 'cream', updatedAt: '2026-01-01T00:00:00.000Z' })] })
+  const newer = store({ books: [book({ id: 'b1', title: 'Remote', pages: 'ruled', updatedAt: '2026-02-01T00:00:00.000Z' })] })
+  assert(mergeStores(stale, newer).books[0]?.pages === 'ruled', 'newer book updatedAt wins')
+  assert(classifySnapshotText('').status === 'missing', 'empty => missing')
+  assert(classifySnapshotText('{not-json').status === 'unreadable', 'broken => unreadable')
+
   const remote = store({
-    books: [book({ id: 'b1', title: 'Book', updatedAt: '2026-02-01T00:00:00.000Z' })],
-    entries: [
-      entry({ id: 'e1', bookId: 'b1', date: '2026-01-02', title: 'Old', updatedAt: '2026-01-02T00:00:00.000Z' }),
-      entry({ id: 'e2', bookId: 'b1', date: '2026-02-02', title: 'New remote', updatedAt: '2026-02-02T00:00:00.000Z' }),
-    ],
+    books: [book({ id: 'b1', title: 'Shared' })],
+    entries: [entry({ id: 'e1', bookId: 'b1', date: '2026-05-01', body: 'v1', updatedAt: '2026-05-01T10:00:00.000Z' })],
   })
-  const merged = mergeStores(local, remote)
-  assert(sameStore(merged, remote), 'adopting newer remote yields merged === remote (skip rewrite)')
-  assert(!sameStore(merged, local), 'local was stale so store should update')
+  const local = store({
+    books: [book({ id: 'b1', title: 'Shared' })],
+    entries: [entry({ id: 'e1', bookId: 'b1', date: '2026-05-01', body: 'v2', updatedAt: '2026-05-01T11:00:00.000Z' })],
+  })
+  const ordinary = mergeStores(local, remote)
+  assert(ordinary.entries.length === 1 && !isConflictId(ordinary.entries[0].id), 'ordinary edit has no conflict copy')
+
+  const deleted = mergeStores(
+    store({ books: [book({ id: 'b1', title: 'Shared' })], deletedEntries: [{ id: 'e1', deletedAt: '2026-05-01T06:00:00.000Z' }] }),
+    store({
+      books: [book({ id: 'b1', title: 'Shared' })],
+      entries: [entry({ id: 'e1', bookId: 'b1', date: '2026-05-01', updatedAt: '2026-05-01T10:00:00.000Z' })],
+    }),
+  )
+  assert(deleted.entries.length === 0, 'tombstone beats fast-clock remote stamp')
+
+  const base = store({
+    books: [book({ id: 'b1', title: 'Shared' })],
+    entries: [entry({ id: 'e1', bookId: 'b1', date: '2026-05-01', body: 'base', updatedAt: '2026-05-01T01:00:00.000Z' })],
+  })
+  const concurrent = mergeStores(
+    store({
+      books: [book({ id: 'b1', title: 'Shared' })],
+      entries: [entry({ id: 'e1', bookId: 'b1', date: '2026-05-01', body: 'A', updatedAt: '2026-05-01T03:00:00.000Z' })],
+    }),
+    store({
+      books: [book({ id: 'b1', title: 'Shared' })],
+      entries: [entry({ id: 'e1', bookId: 'b1', date: '2026-05-01', body: 'B', updatedAt: '2026-05-01T09:00:00.000Z' })],
+    }),
+    base,
+  )
+  const bodies = concurrent.entries.map((item) => item.body)
+  assert(bodies.includes('A') && bodies.includes('B'), 'concurrent edits with base keep both bodies')
+
+  assert(sameStore(mergeStores(remote, remote), remote), 'identical merge is no-op')
 }
 
 console.log('#9/#10 source contracts')
@@ -192,12 +157,11 @@ console.log('#9/#10 source contracts')
   const fs = await import('node:fs/promises')
   const source = await fs.readFile(new URL('../src/useFolderSync.ts', import.meta.url), 'utf8')
   assert(source.includes('pushGeneration'), '#9 push generation guard present')
-  assert(
-    /if \(generation === pushGeneration\.current\) setStatus\('synced'\)/.test(source),
-    '#9 synced only for latest generation',
-  )
+  assert(source.includes('connectionGeneration'), '#5 disconnect generation present')
+  assert(source.includes('flushSync'), '#24 flushSync merge apply present')
   assert(/const reconnect = syncNow/.test(source), '#10 reconnect aliases syncNow')
-  assert(!/const reconnect = useCallback\(async \(\) => \{[\s\S]*await push\(true\)/.test(source), '#10 no duplicated reconnect body')
+  assert(source.includes("loadSyncMeta() ? 'connecting'"), '#8 starts connecting not needs-permission')
+  assert(source.includes("statusRef.current === 'needs-permission'"), '#7 skips push while paused')
 }
 
 if (failed > 0) {

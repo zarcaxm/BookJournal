@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import { flushSync } from 'react-dom'
 import {
   clearFolderHandle,
   loadFolderHandle,
+  loadSyncBase,
   loadSyncMeta,
   mergeStores,
   permissionState,
   pickSyncFolder,
   readSnapshot,
   saveFolderHandle,
+  saveSyncBase,
   saveSyncMeta,
   sameStore,
   SnapshotUnreadableError,
@@ -56,15 +59,18 @@ export function useFolderSync(store: Store, setStore: Dispatch<SetStateAction<St
   const [meta, setMeta] = useState<SyncMeta | null>(() => loadSyncMeta())
   const [status, setStatus] = useState<FolderSyncStatus>(() => {
     if (!syncSupported()) return 'unsupported'
-    return loadSyncMeta() ? 'needs-permission' : 'disconnected'
+    // Neutral until the async permission check finishes (#8).
+    return loadSyncMeta() ? 'connecting' : 'disconnected'
   })
   const [error, setError] = useState<string | null>(null)
   const handleRef = useRef<FileSystemDirectoryHandle | null>(null)
   const storeRef = useRef(store)
   const setStoreRef = useRef(setStore)
+  const statusRef = useRef(status)
   const writeQueue = useRef<Promise<void>>(Promise.resolve())
   const lastMergedJson = useRef<string | null>(null)
   const pushGeneration = useRef(0)
+  const connectionGeneration = useRef(0)
 
   useEffect(() => {
     storeRef.current = store
@@ -74,33 +80,58 @@ export function useFolderSync(store: Store, setStore: Dispatch<SetStateAction<St
     setStoreRef.current = setStore
   }, [setStore])
 
+  useEffect(() => {
+    statusRef.current = status
+  }, [status])
+
+  const clearConnectionState = useCallback(() => {
+    handleRef.current = null
+    saveSyncMeta(null)
+    saveSyncBase(null)
+    setMeta(null)
+  }, [])
+
   const push = useCallback(async (requestPermission = false) => {
     const handle = handleRef.current
     if (!handle) return
+    // Avoid syncing↔paused flicker while access is still blocked (#7).
+    if (!requestPermission && statusRef.current === 'needs-permission') return
+
+    const connection = connectionGeneration.current
     const generation = ++pushGeneration.current
     setStatus('syncing')
     setError(null)
     try {
+      // Request permission before any other awaits so a click gesture still counts.
       const permission = await permissionState(handle, requestPermission)
+      if (connection !== connectionGeneration.current || handleRef.current !== handle) return
       if (permission !== 'granted') {
         if (generation === pushGeneration.current) setStatus('needs-permission')
         return
       }
       const write = writeQueue.current.then(async () => {
+        if (connection !== connectionGeneration.current || handleRef.current !== handle) return
+
         const snapshot = await readSnapshot(handle)
+        if (connection !== connectionGeneration.current || handleRef.current !== handle) return
         if (snapshot.status === 'unreadable') {
           throw new SnapshotUnreadableError(snapshot.detail)
         }
 
         const remote = snapshot.status === 'ready' ? snapshot.store : null
+        const base = loadSyncBase()
         let merged!: Store
-        setStoreRef.current((prev) => {
-          merged = remote ? mergeStores(prev, remote) : prev
-          storeRef.current = merged
-          if (sameStore(merged, prev)) return prev
-          lastMergedJson.current = JSON.stringify(merged)
-          return merged
+        flushSync(() => {
+          setStoreRef.current((prev) => {
+            merged = remote ? mergeStores(prev, remote, base) : prev
+            storeRef.current = merged
+            if (sameStore(merged, prev)) return prev
+            lastMergedJson.current = JSON.stringify(merged)
+            return merged
+          })
         })
+
+        if (connection !== connectionGeneration.current || handleRef.current !== handle) return
 
         if (remote && sameStore(merged, remote)) {
           const next: SyncMeta = {
@@ -108,19 +139,25 @@ export function useFolderSync(store: Store, setStore: Dispatch<SetStateAction<St
             lastSyncedAt: snapshot.status === 'ready' ? snapshot.savedAt : null,
           }
           saveSyncMeta(next)
+          saveSyncBase(merged)
           setMeta(next)
           return
         }
 
         const savedAt = await writeSnapshot(handle, merged)
+        if (connection !== connectionGeneration.current || handleRef.current !== handle) return
+
         const next: SyncMeta = { folderName: handle.name, lastSyncedAt: savedAt }
         saveSyncMeta(next)
+        saveSyncBase(merged)
         setMeta(next)
       })
       writeQueue.current = write.catch(() => {})
       await write
+      if (connection !== connectionGeneration.current || handleRef.current !== handle) return
       if (generation === pushGeneration.current) setStatus('synced')
     } catch (cause) {
+      if (connection !== connectionGeneration.current || handleRef.current !== handle) return
       if (generation !== pushGeneration.current) return
       setError(syncErrorMessage(cause))
       setStatus('error')
@@ -138,8 +175,7 @@ export function useFolderSync(store: Store, setStore: Dispatch<SetStateAction<St
         const handle = await loadFolderHandle()
         if (cancelled) return
         if (!handle) {
-          saveSyncMeta(null)
-          setMeta(null)
+          clearConnectionState()
           setStatus('disconnected')
           return
         }
@@ -149,8 +185,8 @@ export function useFolderSync(store: Store, setStore: Dispatch<SetStateAction<St
         if (permission === 'granted') {
           await push()
         } else if (permission === 'denied') {
-          saveSyncMeta(null)
-          setMeta(null)
+          handleRef.current = null
+          clearConnectionState()
           setStatus('disconnected')
           void clearFolderHandle()
         } else {
@@ -158,8 +194,10 @@ export function useFolderSync(store: Store, setStore: Dispatch<SetStateAction<St
         }
       } catch {
         if (!cancelled) {
+          handleRef.current = null
+          clearConnectionState()
           setStatus('disconnected')
-          setMeta(null)
+          void clearFolderHandle()
         }
       }
     })()
@@ -167,10 +205,11 @@ export function useFolderSync(store: Store, setStore: Dispatch<SetStateAction<St
     return () => {
       cancelled = true
     }
-  }, [supported, push])
+  }, [supported, push, clearConnectionState])
 
   useEffect(() => {
     if (!handleRef.current) return
+    if (status === 'needs-permission' || status === 'connecting' || status === 'disconnected') return
     if (lastMergedJson.current !== null && JSON.stringify(store) === lastMergedJson.current) {
       return
     }
@@ -179,7 +218,7 @@ export function useFolderSync(store: Store, setStore: Dispatch<SetStateAction<St
       void push()
     }, 800)
     return () => window.clearTimeout(timer)
-  }, [store, push])
+  }, [store, push, status])
 
   const connect = useCallback(async () => {
     if (!syncSupported()) {
@@ -197,6 +236,7 @@ export function useFolderSync(store: Store, setStore: Dispatch<SetStateAction<St
         return
       }
       handleRef.current = handle
+      connectionGeneration.current += 1
       try {
         await saveFolderHandle(handle)
       } catch {
@@ -218,13 +258,16 @@ export function useFolderSync(store: Store, setStore: Dispatch<SetStateAction<St
   }, [push])
 
   const syncNow = useCallback(async () => {
-    let handle = handleRef.current
-    if (!handle) {
-      try {
-        handle = await loadFolderHandle()
-      } catch {
-        handle = null
-      }
+    // Prefer the in-memory handle so requestPermission stays inside the user gesture.
+    if (handleRef.current) {
+      await push(true)
+      return
+    }
+    let handle: FileSystemDirectoryHandle | null = null
+    try {
+      handle = await loadFolderHandle()
+    } catch {
+      handle = null
     }
     if (!handle) {
       setStatus('disconnected')
@@ -237,9 +280,9 @@ export function useFolderSync(store: Store, setStore: Dispatch<SetStateAction<St
   const reconnect = syncNow
 
   const disconnect = useCallback(async () => {
-    handleRef.current = null
-    saveSyncMeta(null)
-    setMeta(null)
+    connectionGeneration.current += 1
+    pushGeneration.current += 1
+    clearConnectionState()
     setError(null)
     setStatus(syncSupported() ? 'disconnected' : 'unsupported')
     try {
@@ -247,7 +290,7 @@ export function useFolderSync(store: Store, setStore: Dispatch<SetStateAction<St
     } catch {
       // Nothing else depends on the stored handle.
     }
-  }, [])
+  }, [clearConnectionState])
 
   return useMemo(
     () => ({

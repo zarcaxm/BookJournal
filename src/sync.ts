@@ -1,9 +1,10 @@
 import { cleanStore } from './storage.ts'
 import type { Book, Entry, Store, Tombstone } from './types.ts'
-import { isConflictId } from './types.ts'
+import { isConflictId, rootEntryId } from './types.ts'
 
 export const SYNC_FILE = 'bookjournal.json'
 const META_KEY = 'bookjournal.sync.v1'
+const BASE_KEY = 'bookjournal.sync.base.v1'
 const DB_NAME = 'bookjournal.files'
 const DB_VERSION = 1
 const HANDLE_STORE = 'handles'
@@ -48,6 +49,21 @@ export function loadSyncMeta(): SyncMeta | null {
 export function saveSyncMeta(meta: SyncMeta | null) {
   if (!meta) localStorage.removeItem(META_KEY)
   else localStorage.setItem(META_KEY, JSON.stringify(meta))
+}
+
+export function loadSyncBase(): Store | null {
+  try {
+    const raw = localStorage.getItem(BASE_KEY)
+    if (!raw) return null
+    return cleanStore(JSON.parse(raw))
+  } catch {
+    return null
+  }
+}
+
+export function saveSyncBase(store: Store | null) {
+  if (!store) localStorage.removeItem(BASE_KEY)
+  else localStorage.setItem(BASE_KEY, JSON.stringify(store))
 }
 
 export function pickSyncFolder() {
@@ -203,17 +219,19 @@ function conflictTitle(title: string) {
 }
 
 function conflictEntry(loser: Entry): Entry {
+  const root = rootEntryId(loser.id)
+  const stamp = loser.updatedAt.replace(/[:.]/g, '-')
   return {
     ...loser,
-    id: `${loser.id}__conflict`,
+    id: `${root}__conflict__${stamp}`,
     title: conflictTitle(loser.title),
     publishedTitle: loser.publishedTitle ? conflictTitle(loser.publishedTitle) : loser.publishedTitle,
   }
 }
 
-function isDeleted(tombstones: Map<string, Tombstone>, id: string, updatedAt: string) {
-  const tombstone = tombstones.get(id)
-  return Boolean(tombstone && tombstone.deletedAt >= updatedAt)
+function changedFromBase(entry: Entry, baseEntry: Entry | undefined) {
+  if (!baseEntry) return true
+  return entryFingerprint(entry) !== entryFingerprint(baseEntry)
 }
 
 function orderBooks(local: Book[], remote: Book[], booksById: Map<string, Book>) {
@@ -235,23 +253,73 @@ function orderBooks(local: Book[], remote: Book[], booksById: Map<string, Book>)
   return books
 }
 
-export function mergeStores(local: Store, remote: Store): Store {
+function foldSameDayEntries(entries: Entry[], deletedEntries: Map<string, Tombstone>) {
+  const conflicts: Entry[] = []
+  const primary: Entry[] = []
+  for (const entry of entries) {
+    if (isConflictId(entry.id)) conflicts.push(entry)
+    else primary.push(entry)
+  }
+
+  const byDay = new Map<string, Entry[]>()
+  for (const entry of primary) {
+    const key = `${entry.bookId}:${entry.date}`
+    const list = byDay.get(key)
+    if (list) list.push(entry)
+    else byDay.set(key, [entry])
+  }
+
+  const folded: Entry[] = []
+  const now = new Date().toISOString()
+  for (const group of byDay.values()) {
+    if (group.length === 1) {
+      folded.push(group[0])
+      continue
+    }
+    group.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    let winner = group[0]
+    for (const loser of group.slice(1)) {
+      if (entryFingerprint(winner) === entryFingerprint(loser)) {
+        deletedEntries.set(loser.id, { id: loser.id, deletedAt: now })
+        continue
+      }
+      const appendedBody = [winner.body.trim(), '---', '[Conflict from other device]', loser.body.trim()]
+        .filter(Boolean)
+        .join('\n\n')
+      const appendedTitle =
+        winner.title.trim() === loser.title.trim()
+          ? winner.title
+          : [winner.title.trim(), loser.title.trim()].filter(Boolean).join(' / ')
+      winner = {
+        ...winner,
+        title: appendedTitle,
+        body: appendedBody,
+        updatedAt: winner.updatedAt >= loser.updatedAt ? winner.updatedAt : loser.updatedAt,
+      }
+      deletedEntries.set(loser.id, { id: loser.id, deletedAt: now })
+    }
+    folded.push(winner)
+  }
+
+  return [...folded, ...conflicts]
+}
+
+export function mergeStores(local: Store, remote: Store, base: Store | null = null): Store {
   const deletedBooks = mergeTombstones(local.deletedBooks, remote.deletedBooks)
   const deletedEntries = mergeTombstones(local.deletedEntries, remote.deletedEntries)
+  const baseEntries = new Map((base?.entries ?? []).map((entry) => [entry.id, entry]))
 
   const remoteBooks = new Map(remote.books.map((book) => [book.id, book]))
   const localBooks = new Map(local.books.map((book) => [book.id, book]))
   const booksById = new Map<string, Book>()
 
   for (const id of new Set([...remoteBooks.keys(), ...localBooks.keys()])) {
-    if (isConflictId(id)) continue
+    if (deletedBooks.has(id)) continue
     const left = localBooks.get(id)
     const right = remoteBooks.get(id)
     const candidate = left && right ? newerByUpdatedAt(left, right) : (left ?? right)
     if (!candidate) continue
-    if (isDeleted(deletedBooks, id, candidate.updatedAt)) continue
     booksById.set(id, candidate)
-    deletedBooks.delete(id)
   }
 
   const remoteEntries = new Map(remote.entries.map((entry) => [entry.id, entry]))
@@ -259,51 +327,56 @@ export function mergeStores(local: Store, remote: Store): Store {
   const entriesById = new Map<string, Entry>()
 
   for (const id of new Set([...remoteEntries.keys(), ...localEntries.keys()])) {
+    if (deletedEntries.has(id)) continue
+
     if (isConflictId(id)) {
       const existing = localEntries.get(id) ?? remoteEntries.get(id)
-      if (existing && booksById.has(existing.bookId) && !isDeleted(deletedEntries, id, existing.updatedAt)) {
-        entriesById.set(id, existing)
-      }
+      if (existing && booksById.has(existing.bookId)) entriesById.set(id, existing)
       continue
     }
 
     const left = localEntries.get(id)
     const right = remoteEntries.get(id)
     if (left && right) {
-      const winner = newerByUpdatedAt(left, right)
-      const loser = winner === left ? right : left
-      if (isDeleted(deletedEntries, id, winner.updatedAt)) continue
-      if (!booksById.has(winner.bookId)) continue
-      entriesById.set(id, winner)
-      deletedEntries.delete(id)
-      if (entryFingerprint(left) !== entryFingerprint(right)) {
-        const copy = conflictEntry(loser)
-        if (!entriesById.has(copy.id) && booksById.has(copy.bookId) && !isDeleted(deletedEntries, copy.id, copy.updatedAt)) {
-          entriesById.set(copy.id, copy)
-        }
+      if (!booksById.has(left.bookId) && !booksById.has(right.bookId)) continue
+      if (entryFingerprint(left) === entryFingerprint(right)) {
+        const winner = newerByUpdatedAt(left, right)
+        if (booksById.has(winner.bookId)) entriesById.set(id, winner)
+        continue
       }
+
+      const localChanged = !base || changedFromBase(left, baseEntries.get(id))
+      const remoteChanged = !base || changedFromBase(right, baseEntries.get(id))
+
+      if (base && localChanged && remoteChanged) {
+        const winner = newerByUpdatedAt(left, right)
+        const loser = winner === left ? right : left
+        if (booksById.has(winner.bookId)) {
+          entriesById.set(id, winner)
+          const copy = conflictEntry(loser)
+          if (!deletedEntries.has(copy.id) && booksById.has(copy.bookId) && !entriesById.has(copy.id)) {
+            entriesById.set(copy.id, copy)
+          }
+        }
+        continue
+      }
+
+      const chosen = localChanged && !remoteChanged ? left : remoteChanged && !localChanged ? right : newerByUpdatedAt(left, right)
+      if (booksById.has(chosen.bookId)) entriesById.set(id, chosen)
       continue
     }
 
     const entry = left ?? right
     if (!entry) continue
-    if (isDeleted(deletedEntries, id, entry.updatedAt)) continue
     if (!booksById.has(entry.bookId)) continue
     entriesById.set(id, entry)
-    deletedEntries.delete(id)
   }
 
-  // Preserve remote-only / local-only conflict copies that were already stored.
-  for (const entry of [...remote.entries, ...local.entries]) {
-    if (!isConflictId(entry.id) || entriesById.has(entry.id)) continue
-    if (!booksById.has(entry.bookId)) continue
-    if (isDeleted(deletedEntries, entry.id, entry.updatedAt)) continue
-    entriesById.set(entry.id, entry)
-  }
+  const folded = foldSameDayEntries([...entriesById.values()], deletedEntries)
 
   return {
     books: orderBooks(local.books, remote.books, booksById),
-    entries: [...entriesById.values()],
+    entries: folded,
     deletedBooks: [...deletedBooks.values()],
     deletedEntries: [...deletedEntries.values()],
   }
