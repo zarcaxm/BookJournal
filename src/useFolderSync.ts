@@ -210,9 +210,20 @@ export function useFolderSync(store: Store, setStore: Dispatch<SetStateAction<St
     }
   }, [supported, push, clearConnectionState])
 
+  // Autosave only when the journal store changes — not when status flips
+  // (syncing→synced / error), which previously rescheduled a read every 800ms.
   useEffect(() => {
     if (!handleRef.current) return
-    if (status === 'needs-permission' || status === 'connecting' || status === 'disconnected') return
+    const current = statusRef.current
+    if (
+      current === 'needs-permission' ||
+      current === 'connecting' ||
+      current === 'disconnected' ||
+      current === 'error' ||
+      current === 'unsupported'
+    ) {
+      return
+    }
     if (lastMergedJson.current !== null && JSON.stringify(store) === lastMergedJson.current) {
       return
     }
@@ -221,7 +232,7 @@ export function useFolderSync(store: Store, setStore: Dispatch<SetStateAction<St
       void push()
     }, 800)
     return () => window.clearTimeout(timer)
-  }, [store, push, status])
+  }, [store, push])
 
   const connect = useCallback(async () => {
     if (!syncSupported()) {

@@ -1,10 +1,11 @@
 /**
  * Owned hook regressions for PR #11. Bounded timers; always unmount.
- * Run: node --test --test-concurrency=1 --experimental-strip-types --test-timeout=15000 scripts/folder-sync.hook.test.ts
+ * Run: node --test --test-concurrency=1 --experimental-strip-types --test-timeout=45000 --test-force-exit scripts/folder-sync.hook.test.ts
  */
 import { afterEach, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { JSDOM } from 'jsdom'
+import { flushSync } from 'react-dom'
 
 const dom = new JSDOM('<!doctype html><div id="root"></div>', { url: 'http://localhost/' })
 const g = globalThis as typeof globalThis & {
@@ -144,7 +145,9 @@ function mount(initial: Store, folder: ReturnType<typeof makeFolder>): Mount {
   }
   const el = document.createElement('div')
   const root = createRoot(el)
-  root.render(React.createElement(Harness))
+  flushSync(() => {
+    root.render(React.createElement(Harness))
+  })
   const mounted: Mount = {
     api,
     unmount: () => {
@@ -255,4 +258,44 @@ test('permission denial leaves folder recoverable via reconnect', async () => {
   await recovered
   await until(() => api.sync.status === 'synced')
   assert.equal(api.sync.status, 'synced')
+})
+
+test('IDLE: after Synced, no further reads or writes while nothing changes', async () => {
+  const folder = makeFolder(null)
+  const { api } = mount({ ...empty, books: [BOOK], entries: [ENTRY] }, folder)
+  await tick(20)
+  await api.sync.connect()
+  await until(() => api.sync.status === 'synced')
+  await tick(300)
+  const reads0 = folder.reads
+  const writes0 = folder.writes
+  await tick(5000)
+  assert.equal(folder.reads - reads0, 0, 'idle read loop')
+  assert.equal(folder.writes - writes0, 0, 'idle write loop')
+})
+
+test('IDLE: after an error (damaged file), no automatic retry loop', async () => {
+  const folder = makeFolder('{"books":[')
+  const { api } = mount({ ...empty, books: [BOOK], entries: [ENTRY] }, folder)
+  await tick(20)
+  await api.sync.connect()
+  await tick(50)
+  assert.equal(api.sync.status, 'error')
+  const reads0 = folder.reads
+  await tick(5000)
+  assert.equal(folder.text, '{"books":[', 'damaged file was overwritten')
+  assert.ok(folder.reads - reads0 <= 1, 'retry loop while in error')
+})
+
+test('explicit Sync now still works after idle Synced', async () => {
+  const folder = makeFolder(null)
+  const { api } = mount({ ...empty, books: [BOOK], entries: [ENTRY] }, folder)
+  await tick(20)
+  await api.sync.connect()
+  await until(() => api.sync.status === 'synced')
+  await tick(1200)
+  const reads0 = folder.reads
+  await api.sync.syncNow()
+  await until(() => api.sync.status === 'synced')
+  assert.ok(folder.reads > reads0, 'Sync now should read the folder')
 })

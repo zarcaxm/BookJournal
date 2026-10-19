@@ -180,6 +180,11 @@ console.log('#9/#10 source contracts')
   assert(/const reconnect = syncNow/.test(source), '#10 reconnect aliases syncNow')
   assert(source.includes("loadSyncMeta() ? 'connecting'"), '#8 starts connecting not needs-permission')
   assert(source.includes("statusRef.current === 'needs-permission'"), '#7 skips push while paused')
+  assert(
+    /useEffect\(\(\) => \{[\s\S]*?void push\(\)[\s\S]*?\}, \[store, push\]\)/.test(source),
+    'autosave depends on store only (not status)',
+  )
+  assert(source.includes("current === 'error'"), 'autosave skips while status is error')
 }
 
 if (failed > 0) {
