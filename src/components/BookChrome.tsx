@@ -3,6 +3,7 @@ import { useJournal } from '../journal.tsx'
 import type { Book } from '../types.ts'
 import { ExportButton } from './ExportButton.tsx'
 import { PagePicker } from './PagePicker.tsx'
+import { SyncStatus } from './SyncStatus.tsx'
 
 export function BookChrome({
   book,
@@ -46,6 +47,7 @@ export function BookChrome({
         </div>
       </header>
       {saveError ? <p className="banner">{saveError}</p> : null}
+      <SyncStatus compact />
       {children}
     </div>
   )

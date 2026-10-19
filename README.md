@@ -52,6 +52,29 @@ Book and entry data is stored only in the browser's `localStorage`, under the ke
 
 The PWA service worker caches the built application for offline use and checks for updates automatically. PWA installation and service workers require HTTPS in production; `localhost` is treated as a secure context during development. The UI uses Google Fonts, so the first load is best done with an internet connection; fetched font resources are cached by the service worker.
 
+## Google Drive folder sync
+
+BookJournal can mirror every book and entry into a folder on disk, so a local
+Google Drive folder can keep a copy for you.
+
+1. Open the app in Chrome or Edge (the File System Access API is required).
+2. On the shelf, press **Choose folder**.
+3. Pick the folder Google Drive for desktop syncs to your computer.
+4. Writing in the journal then backs up to `bookjournal.json` inside that folder.
+
+The status bar appears on the shelf and inside each book:
+
+- **Synced** — the folder has the latest copy.
+- **Syncing** — a change is being written; saves are debounced.
+- **Access paused** — the browser needs the folder confirmed again; press **Allow access**.
+- **Unavailable** — the browser does not support folder access.
+
+Notes:
+
+- Connecting a folder to an empty browser restores the entries already in the folder; otherwise the browser copy is written to the folder.
+- The browser exposes only the folder name, not the full path.
+- The write goes to the local Drive folder; the Drive client uploads it from there.
+
 ## Deployment
 
 Deploy the generated `dist/` directory to any static host. The current PWA configuration assumes the app is hosted at the domain root (`/`). Configure the host to:

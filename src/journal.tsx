@@ -3,6 +3,7 @@ import { createContext, useContext } from 'react'
 import { toDateKey } from './dates.ts'
 import { loadStore, saveStore } from './storage.ts'
 import type { Book, CoverId, DayDraft, Entry, PageId, View } from './types.ts'
+import { useFolderSync, type FolderSync } from './useFolderSync.ts'
 
 type JournalContextValue = {
   books: Book[]
@@ -10,6 +11,7 @@ type JournalContextValue = {
   view: View
   selectedDate: string
   saveError: string | null
+  sync: FolderSync
   openLibrary: () => void
   openJournal: (bookId: string, date?: string) => void
   openManuscript: (bookId: string) => void
@@ -35,6 +37,7 @@ export function JournalProvider({ children }: { children: ReactNode }) {
   const [view, setView] = useState<View>({ name: 'library' })
   const [selectedDate, setSelectedDate] = useState(() => toDateKey(new Date()))
   const [saveError, setSaveError] = useState<string | null>(null)
+  const sync = useFolderSync(store, setStore)
 
   useEffect(() => {
     try {
@@ -208,6 +211,7 @@ export function JournalProvider({ children }: { children: ReactNode }) {
       view,
       selectedDate,
       saveError,
+      sync,
       openLibrary,
       openJournal,
       openManuscript,
@@ -227,6 +231,7 @@ export function JournalProvider({ children }: { children: ReactNode }) {
       view,
       selectedDate,
       saveError,
+      sync,
       openLibrary,
       openJournal,
       openManuscript,

@@ -4,6 +4,7 @@ import { useJournal } from '../journal.tsx'
 import { coverOf, entryHasWriting, entryInBook, entryIsDirty, pagesOf, type Book } from '../types.ts'
 import { ConfirmDialog } from './ConfirmDialog.tsx'
 import { NewBookDialog } from './NewBookDialog.tsx'
+import { SyncStatus } from './SyncStatus.tsx'
 
 function volumeLabel(published: number, drafts: number) {
   if (published === 0 && drafts === 0) return 'Nothing written yet'
@@ -60,6 +61,8 @@ export function Library() {
           New book
         </button>
       </header>
+
+      <SyncStatus />
 
       <p className="shelf-count">
         {books.length === 0
