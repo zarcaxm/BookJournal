@@ -1,0 +1,138 @@
+{
+  "shelf (synced)": {
+    "lowContrast": [],
+    "unnamedButtons": 0
+  },
+  "keyboard: shelf": [
+    "New book",
+    "Sync now",
+    "Disconnect",
+    "A Year of Small MorningsAndré Ci",
+    "More actions for A Year of Small",
+    "Field NotesUnsigned",
+    "More actions for Field Notes",
+    "BODY",
+    "New book"
+  ],
+  "keyboard: journal": [
+    "Shelf",
+    "Cream",
+    "Ruled",
+    "Typewriter",
+    "Night",
+    "Press",
+    "Journal",
+    "Manuscript3",
+    "Export PDF",
+    "Sync now",
+    "Disconnect",
+    "Previous month"
+  ],
+  "journal (sync paused)": {
+    "lowContrast": [],
+    "unnamedButtons": 0
+  },
+  "paused → Allow access recovers": "Back up to Google Drive",
+  "error state title": "Sync needs attention",
+  "journal (sync error)": {
+    "lowContrast": [],
+    "unnamedButtons": 0
+  },
+  "desktop Cream journal": {
+    "lowContrast": [],
+    "unnamedButtons": 0
+  },
+  "desktop Cream manuscript": {
+    "lowContrast": [],
+    "unnamedButtons": 0
+  },
+  "desktop Ruled journal": {
+    "lowContrast": [],
+    "unnamedButtons": 0
+  },
+  "desktop Ruled manuscript": {
+    "lowContrast": [],
+    "unnamedButtons": 0
+  },
+  "desktop Typewriter journal": {
+    "lowContrast": [],
+    "unnamedButtons": 0
+  },
+  "desktop Typewriter manuscript": {
+    "lowContrast": [],
+    "unnamedButtons": 0
+  },
+  "desktop Night journal": {
+    "lowContrast": [
+      "Empty day → 2.00"
+    ],
+    "unnamedButtons": 0
+  },
+  "desktop Night manuscript": {
+    "lowContrast": [
+      "Newer draft in the journal → 1.88"
+    ],
+    "unnamedButtons": 0
+  },
+  "desktop Press journal": {
+    "lowContrast": [],
+    "unnamedButtons": 0
+  },
+  "desktop Press manuscript": {
+    "lowContrast": [],
+    "unnamedButtons": 0
+  },
+  "phone Cream journal": {
+    "lowContrast": [],
+    "unnamedButtons": 0
+  },
+  "phone Cream manuscript": {
+    "lowContrast": [],
+    "unnamedButtons": 0
+  },
+  "phone Ruled journal": {
+    "lowContrast": [],
+    "unnamedButtons": 0
+  },
+  "phone Ruled manuscript": {
+    "lowContrast": [],
+    "unnamedButtons": 0
+  },
+  "phone Typewriter journal": {
+    "lowContrast": [],
+    "unnamedButtons": 0
+  },
+  "phone Typewriter manuscript": {
+    "lowContrast": [],
+    "unnamedButtons": 0
+  },
+  "phone Night journal": {
+    "lowContrast": [
+      "Empty day → 2.00"
+    ],
+    "unnamedButtons": 0
+  },
+  "phone Night manuscript": {
+    "lowContrast": [
+      "Newer draft in the journal → 1.88"
+    ],
+    "unnamedButtons": 0
+  },
+  "phone Press journal": {
+    "lowContrast": [],
+    "unnamedButtons": 0
+  },
+  "phone Press manuscript": {
+    "lowContrast": [],
+    "unnamedButtons": 0
+  },
+  "phone shelf": {
+    "lowContrast": [],
+    "unnamedButtons": 0
+  },
+  "menu Escape returns focus to trigger": true,
+  "phone new book dialog": {
+    "lowContrast": [],
+    "unnamedButtons": 0
+  }
+}
