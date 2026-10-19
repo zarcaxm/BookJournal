@@ -1,4 +1,5 @@
 import { addMonths, calendarCells, monthLabel, startOfMonth, toDateKey } from '../dates.ts'
+import { Icon } from './Icon.tsx'
 import { entryHasWriting, entryInBook, entryIsDirty, type Entry } from '../types.ts'
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
@@ -33,17 +34,17 @@ export function Calendar({
     <section className="calendar" aria-label="Journal calendar">
       <div className="calendar-nav">
         <button type="button" className="icon-button" aria-label="Previous month" onClick={() => onMonth(addMonths(month, -1))}>
-          ‹
+          <Icon name="chevron-left" />
         </button>
         <h2>{monthLabel(month)}</h2>
         <button type="button" className="icon-button" aria-label="Next month" onClick={() => onMonth(addMonths(month, 1))}>
-          ›
+          <Icon name="chevron-right" />
         </button>
       </div>
       {!showingToday ? (
         <button
           type="button"
-          className="text-button today-jump"
+          className="btn ghost small today-jump"
           onClick={() => {
             const todayDate = new Date()
             onMonth(startOfMonth(todayDate))

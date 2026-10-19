@@ -80,7 +80,7 @@ export function SyncStatus({ compact = false }: { compact?: boolean }) {
             <button type="button" className="btn primary" onClick={() => void sync.syncNow()}>
               Try again
             </button>
-            <button type="button" className="text-button" onClick={() => void sync.disconnect()}>
+            <button type="button" className="btn ghost" onClick={() => void sync.disconnect()}>
               Disconnect
             </button>
           </>
@@ -89,7 +89,7 @@ export function SyncStatus({ compact = false }: { compact?: boolean }) {
             <button type="button" className="btn quiet" disabled={busy} onClick={() => void sync.syncNow()}>
               {busy ? 'Syncing…' : 'Sync now'}
             </button>
-            <button type="button" className="text-button" onClick={() => void sync.disconnect()}>
+            <button type="button" className="btn ghost" onClick={() => void sync.disconnect()}>
               Disconnect
             </button>
           </>
