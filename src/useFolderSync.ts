@@ -3,11 +3,14 @@ import {
   clearFolderHandle,
   loadFolderHandle,
   loadSyncMeta,
+  mergeStores,
   permissionState,
   pickSyncFolder,
   readSnapshot,
   saveFolderHandle,
   saveSyncMeta,
+  sameStore,
+  SnapshotUnreadableError,
   syncSupported,
   writeSnapshot,
   type SyncMeta,
@@ -34,15 +37,12 @@ export type FolderSync = {
   disconnect: () => Promise<void>
 }
 
-function isEmpty(store: Store) {
-  return store.books.length === 0 && store.entries.length === 0
-}
-
 function isAbort(error: unknown) {
   return error instanceof DOMException && error.name === 'AbortError'
 }
 
 function syncErrorMessage(error: unknown) {
+  if (error instanceof SnapshotUnreadableError) return error.message
   if (error instanceof DOMException) {
     if (error.name === 'NotAllowedError') return 'Permission to use the folder was denied.'
     if (error.name === 'SecurityError') return 'This browser blocked access to the folder.'
@@ -72,7 +72,7 @@ export function useFolderSync(store: Store, replaceStore: (store: Store) => void
     replaceRef.current = replaceStore
   }, [replaceStore])
 
-  const push = useCallback(async (snapshot: Store, requestPermission = false) => {
+  const push = useCallback(async (requestPermission = false) => {
     const handle = handleRef.current
     if (!handle) return
     setStatus('syncing')
@@ -84,7 +84,19 @@ export function useFolderSync(store: Store, replaceStore: (store: Store) => void
         return
       }
       const write = writeQueue.current.then(async () => {
-        const savedAt = await writeSnapshot(handle, snapshot)
+        const snapshot = await readSnapshot(handle)
+        if (snapshot.status === 'unreadable') {
+          throw new SnapshotUnreadableError(snapshot.detail)
+        }
+
+        const local = storeRef.current
+        const merged = snapshot.status === 'ready' ? mergeStores(local, snapshot.store) : local
+        if (!sameStore(merged, local)) {
+          replaceRef.current(merged)
+          storeRef.current = merged
+        }
+
+        const savedAt = await writeSnapshot(handle, merged)
         const next: SyncMeta = { folderName: handle.name, lastSyncedAt: savedAt }
         saveSyncMeta(next)
         setMeta(next)
@@ -118,7 +130,7 @@ export function useFolderSync(store: Store, replaceStore: (store: Store) => void
         const permission = await permissionState(handle)
         if (cancelled) return
         if (permission === 'granted') {
-          await push(storeRef.current)
+          await push()
         } else if (permission === 'denied') {
           saveSyncMeta(null)
           setMeta(null)
@@ -143,7 +155,7 @@ export function useFolderSync(store: Store, replaceStore: (store: Store) => void
   useEffect(() => {
     if (!handleRef.current) return
     const timer = window.setTimeout(() => {
-      void push(store)
+      void push()
     }, 800)
     return () => window.clearTimeout(timer)
   }, [store, push])
@@ -173,17 +185,7 @@ export function useFolderSync(store: Store, replaceStore: (store: Store) => void
       saveSyncMeta(next)
       setMeta(next)
 
-      const existing = await readSnapshot(handle)
-      if (existing && isEmpty(storeRef.current) && !isEmpty(existing.store)) {
-        replaceRef.current(existing.store)
-        const adopted: SyncMeta = { folderName: handle.name, lastSyncedAt: existing.savedAt }
-        saveSyncMeta(adopted)
-        setMeta(adopted)
-        setStatus('synced')
-        return
-      }
-
-      await push(storeRef.current)
+      await push()
     } catch (cause) {
       if (isAbort(cause)) {
         setStatus(handleRef.current ? 'synced' : 'disconnected')
@@ -208,7 +210,7 @@ export function useFolderSync(store: Store, replaceStore: (store: Store) => void
       return
     }
     handleRef.current = handle
-    await push(storeRef.current, true)
+    await push(true)
   }, [push])
 
   const reconnect = useCallback(async () => {
@@ -225,7 +227,7 @@ export function useFolderSync(store: Store, replaceStore: (store: Store) => void
       return
     }
     handleRef.current = handle
-    await push(storeRef.current, true)
+    await push(true)
   }, [push])
 
   const disconnect = useCallback(async () => {

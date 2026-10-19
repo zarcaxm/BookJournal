@@ -1,5 +1,5 @@
 import { cleanStore } from './storage.ts'
-import type { Store } from './types.ts'
+import type { Book, Entry, Store } from './types.ts'
 
 export const SYNC_FILE = 'bookjournal.json'
 const META_KEY = 'bookjournal.sync.v1'
@@ -11,6 +11,18 @@ const HANDLE_KEY = 'sync-folder'
 export type SyncMeta = {
   folderName: string
   lastSyncedAt: string | null
+}
+
+export type SnapshotRead =
+  | { status: 'missing' }
+  | { status: 'ready'; store: Store; savedAt: string | null }
+  | { status: 'unreadable'; detail: string }
+
+export class SnapshotUnreadableError extends Error {
+  constructor(detail: string) {
+    super(detail)
+    this.name = 'SnapshotUnreadableError'
+  }
 }
 
 export function syncSupported() {
@@ -116,23 +128,94 @@ export async function writeSnapshot(handle: FileSystemDirectoryHandle, store: St
   return savedAt
 }
 
-export async function readSnapshot(handle: FileSystemDirectoryHandle) {
+function looksLikeSnapshot(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object') return false
+  const record = value as Record<string, unknown>
+  return Array.isArray(record.books) || Array.isArray(record.entries) || record.app === 'BookJournal'
+}
+
+export async function readSnapshot(handle: FileSystemDirectoryHandle): Promise<SnapshotRead> {
   let file: FileSystemFileHandle
   try {
     file = await handle.getFileHandle(SYNC_FILE)
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'NotFoundError') return null
+    if (error instanceof DOMException && error.name === 'NotFoundError') return { status: 'missing' }
     throw error
   }
   const text = await (await file.getFile()).text()
-  if (!text.trim()) return null
-  try {
-    const parsed = JSON.parse(text) as { savedAt?: unknown }
+  if (!text.trim()) {
     return {
-      store: cleanStore(parsed),
-      savedAt: typeof parsed.savedAt === 'string' ? parsed.savedAt : null,
+      status: 'unreadable',
+      detail: 'The backup file is empty or still downloading. Sync paused so it is not overwritten.',
     }
-  } catch {
-    return null
   }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return {
+      status: 'unreadable',
+      detail: 'The backup file is damaged or incomplete. Sync paused so it is not overwritten.',
+    }
+  }
+  if (!looksLikeSnapshot(parsed)) {
+    return {
+      status: 'unreadable',
+      detail: 'The backup file is not a BookJournal snapshot. Sync paused so it is not overwritten.',
+    }
+  }
+  return {
+    status: 'ready',
+    store: cleanStore(parsed),
+    savedAt: typeof parsed.savedAt === 'string' ? parsed.savedAt : null,
+  }
+}
+
+function newerEntry(a: Entry, b: Entry) {
+  return a.updatedAt >= b.updatedAt ? a : b
+}
+
+export function mergeStores(local: Store, remote: Store): Store {
+  const booksById = new Map<string, Book>()
+  for (const book of remote.books) booksById.set(book.id, book)
+  for (const book of local.books) booksById.set(book.id, book)
+
+  const byId = new Map<string, Entry>()
+  for (const entry of remote.entries) byId.set(entry.id, entry)
+  for (const entry of local.entries) {
+    const previous = byId.get(entry.id)
+    byId.set(entry.id, previous ? newerEntry(entry, previous) : entry)
+  }
+
+  const byDay = new Map<string, Entry>()
+  for (const entry of byId.values()) {
+    const key = `${entry.bookId}:${entry.date}`
+    const previous = byDay.get(key)
+    byDay.set(key, previous ? newerEntry(entry, previous) : entry)
+  }
+
+  const bookIds = new Set(booksById.keys())
+  const entries = [...byDay.values()].filter((entry) => bookIds.has(entry.bookId))
+
+  const books: Book[] = []
+  const seen = new Set<string>()
+  for (const book of local.books) {
+    const merged = booksById.get(book.id)
+    if (!merged || seen.has(book.id)) continue
+    books.push(merged)
+    seen.add(book.id)
+  }
+  for (const book of remote.books) {
+    if (seen.has(book.id)) continue
+    const merged = booksById.get(book.id)
+    if (!merged) continue
+    books.push(merged)
+    seen.add(book.id)
+  }
+
+  return { books, entries }
+}
+
+export function sameStore(a: Store, b: Store) {
+  return JSON.stringify(a) === JSON.stringify(b)
 }
