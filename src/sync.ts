@@ -137,15 +137,7 @@ function looksLikeSnapshot(value: unknown): value is Record<string, unknown> {
   return Array.isArray(record.books) || Array.isArray(record.entries) || record.app === 'BookJournal'
 }
 
-export async function readSnapshot(handle: FileSystemDirectoryHandle): Promise<SnapshotRead> {
-  let file: FileSystemFileHandle
-  try {
-    file = await handle.getFileHandle(SYNC_FILE)
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'NotFoundError') return { status: 'missing' }
-    throw error
-  }
-  const text = await (await file.getFile()).text()
+export function classifySnapshotText(text: string): SnapshotRead {
   // Zero-byte files can be left behind by a failed write; treat them as missing so sync can recover.
   if (!text.trim()) return { status: 'missing' }
   let parsed: unknown
@@ -166,8 +158,19 @@ export async function readSnapshot(handle: FileSystemDirectoryHandle): Promise<S
   return {
     status: 'ready',
     store: cleanStore(parsed),
-    savedAt: typeof parsed.savedAt === 'string' ? parsed.savedAt : null,
+    savedAt: typeof (parsed as { savedAt?: unknown }).savedAt === 'string' ? (parsed as { savedAt: string }).savedAt : null,
   }
+}
+
+export async function readSnapshot(handle: FileSystemDirectoryHandle): Promise<SnapshotRead> {
+  let file: FileSystemFileHandle
+  try {
+    file = await handle.getFileHandle(SYNC_FILE)
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'NotFoundError') return { status: 'missing' }
+    throw error
+  }
+  return classifySnapshotText(await (await file.getFile()).text())
 }
 
 function mergeTombstones(local: Tombstone[], remote: Tombstone[]) {

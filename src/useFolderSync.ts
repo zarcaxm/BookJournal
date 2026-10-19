@@ -64,6 +64,7 @@ export function useFolderSync(store: Store, setStore: Dispatch<SetStateAction<St
   const setStoreRef = useRef(setStore)
   const writeQueue = useRef<Promise<void>>(Promise.resolve())
   const lastMergedJson = useRef<string | null>(null)
+  const pushGeneration = useRef(0)
 
   useEffect(() => {
     storeRef.current = store
@@ -76,12 +77,13 @@ export function useFolderSync(store: Store, setStore: Dispatch<SetStateAction<St
   const push = useCallback(async (requestPermission = false) => {
     const handle = handleRef.current
     if (!handle) return
+    const generation = ++pushGeneration.current
     setStatus('syncing')
     setError(null)
     try {
       const permission = await permissionState(handle, requestPermission)
       if (permission !== 'granted') {
-        setStatus('needs-permission')
+        if (generation === pushGeneration.current) setStatus('needs-permission')
         return
       }
       const write = writeQueue.current.then(async () => {
@@ -117,8 +119,9 @@ export function useFolderSync(store: Store, setStore: Dispatch<SetStateAction<St
       })
       writeQueue.current = write.catch(() => {})
       await write
-      setStatus('synced')
+      if (generation === pushGeneration.current) setStatus('synced')
     } catch (cause) {
+      if (generation !== pushGeneration.current) return
       setError(syncErrorMessage(cause))
       setStatus('error')
     }
@@ -231,22 +234,7 @@ export function useFolderSync(store: Store, setStore: Dispatch<SetStateAction<St
     await push(true)
   }, [push])
 
-  const reconnect = useCallback(async () => {
-    let handle = handleRef.current
-    if (!handle) {
-      try {
-        handle = await loadFolderHandle()
-      } catch {
-        handle = null
-      }
-    }
-    if (!handle) {
-      setStatus('disconnected')
-      return
-    }
-    handleRef.current = handle
-    await push(true)
-  }, [push])
+  const reconnect = syncNow
 
   const disconnect = useCallback(async () => {
     handleRef.current = null
