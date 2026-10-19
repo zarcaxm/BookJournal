@@ -1,5 +1,6 @@
 import { cleanStore } from './storage.ts'
-import type { Book, Entry, Store } from './types.ts'
+import type { Book, Entry, Store, Tombstone } from './types.ts'
+import { isConflictId } from './types.ts'
 
 export const SYNC_FILE = 'bookjournal.json'
 const META_KEY = 'bookjournal.sync.v1'
@@ -115,6 +116,8 @@ export async function writeSnapshot(handle: FileSystemDirectoryHandle, store: St
           savedAt,
           books: store.books,
           entries: store.entries,
+          deletedBooks: store.deletedBooks,
+          deletedEntries: store.deletedEntries,
         },
         null,
         2,
@@ -143,12 +146,8 @@ export async function readSnapshot(handle: FileSystemDirectoryHandle): Promise<S
     throw error
   }
   const text = await (await file.getFile()).text()
-  if (!text.trim()) {
-    return {
-      status: 'unreadable',
-      detail: 'The backup file is empty or still downloading. Sync paused so it is not overwritten.',
-    }
-  }
+  // Zero-byte files can be left behind by a failed write; treat them as missing so sync can recover.
+  if (!text.trim()) return { status: 'missing' }
   let parsed: unknown
   try {
     parsed = JSON.parse(text)
@@ -171,49 +170,140 @@ export async function readSnapshot(handle: FileSystemDirectoryHandle): Promise<S
   }
 }
 
-function newerEntry(a: Entry, b: Entry) {
+function mergeTombstones(local: Tombstone[], remote: Tombstone[]) {
+  const byId = new Map<string, Tombstone>()
+  for (const item of [...remote, ...local]) {
+    const previous = byId.get(item.id)
+    if (!previous || item.deletedAt > previous.deletedAt) byId.set(item.id, item)
+  }
+  return byId
+}
+
+function newerByUpdatedAt<T extends { updatedAt: string }>(a: T, b: T) {
   return a.updatedAt >= b.updatedAt ? a : b
 }
 
-export function mergeStores(local: Store, remote: Store): Store {
-  const booksById = new Map<string, Book>()
-  for (const book of remote.books) booksById.set(book.id, book)
-  for (const book of local.books) booksById.set(book.id, book)
+function entryFingerprint(entry: Entry) {
+  return JSON.stringify({
+    bookId: entry.bookId,
+    date: entry.date,
+    title: entry.title,
+    body: entry.body,
+    publishedTitle: entry.publishedTitle,
+    publishedBody: entry.publishedBody,
+    status: entry.status,
+  })
+}
 
-  const byId = new Map<string, Entry>()
-  for (const entry of remote.entries) byId.set(entry.id, entry)
-  for (const entry of local.entries) {
-    const previous = byId.get(entry.id)
-    byId.set(entry.id, previous ? newerEntry(entry, previous) : entry)
+function conflictTitle(title: string) {
+  return title.startsWith('[Conflict] ') ? title : `[Conflict] ${title}`
+}
+
+function conflictEntry(loser: Entry): Entry {
+  return {
+    ...loser,
+    id: `${loser.id}__conflict`,
+    title: conflictTitle(loser.title),
+    publishedTitle: loser.publishedTitle ? conflictTitle(loser.publishedTitle) : loser.publishedTitle,
   }
+}
 
-  const byDay = new Map<string, Entry>()
-  for (const entry of byId.values()) {
-    const key = `${entry.bookId}:${entry.date}`
-    const previous = byDay.get(key)
-    byDay.set(key, previous ? newerEntry(entry, previous) : entry)
-  }
+function isDeleted(tombstones: Map<string, Tombstone>, id: string, updatedAt: string) {
+  const tombstone = tombstones.get(id)
+  return Boolean(tombstone && tombstone.deletedAt >= updatedAt)
+}
 
-  const bookIds = new Set(booksById.keys())
-  const entries = [...byDay.values()].filter((entry) => bookIds.has(entry.bookId))
-
+function orderBooks(local: Book[], remote: Book[], booksById: Map<string, Book>) {
   const books: Book[] = []
   const seen = new Set<string>()
-  for (const book of local.books) {
+  for (const book of local) {
     const merged = booksById.get(book.id)
     if (!merged || seen.has(book.id)) continue
     books.push(merged)
     seen.add(book.id)
   }
-  for (const book of remote.books) {
+  for (const book of remote) {
     if (seen.has(book.id)) continue
     const merged = booksById.get(book.id)
     if (!merged) continue
     books.push(merged)
     seen.add(book.id)
   }
+  return books
+}
 
-  return { books, entries }
+export function mergeStores(local: Store, remote: Store): Store {
+  const deletedBooks = mergeTombstones(local.deletedBooks, remote.deletedBooks)
+  const deletedEntries = mergeTombstones(local.deletedEntries, remote.deletedEntries)
+
+  const remoteBooks = new Map(remote.books.map((book) => [book.id, book]))
+  const localBooks = new Map(local.books.map((book) => [book.id, book]))
+  const booksById = new Map<string, Book>()
+
+  for (const id of new Set([...remoteBooks.keys(), ...localBooks.keys()])) {
+    if (isConflictId(id)) continue
+    const left = localBooks.get(id)
+    const right = remoteBooks.get(id)
+    const candidate = left && right ? newerByUpdatedAt(left, right) : (left ?? right)
+    if (!candidate) continue
+    if (isDeleted(deletedBooks, id, candidate.updatedAt)) continue
+    booksById.set(id, candidate)
+    deletedBooks.delete(id)
+  }
+
+  const remoteEntries = new Map(remote.entries.map((entry) => [entry.id, entry]))
+  const localEntries = new Map(local.entries.map((entry) => [entry.id, entry]))
+  const entriesById = new Map<string, Entry>()
+
+  for (const id of new Set([...remoteEntries.keys(), ...localEntries.keys()])) {
+    if (isConflictId(id)) {
+      const existing = localEntries.get(id) ?? remoteEntries.get(id)
+      if (existing && booksById.has(existing.bookId) && !isDeleted(deletedEntries, id, existing.updatedAt)) {
+        entriesById.set(id, existing)
+      }
+      continue
+    }
+
+    const left = localEntries.get(id)
+    const right = remoteEntries.get(id)
+    if (left && right) {
+      const winner = newerByUpdatedAt(left, right)
+      const loser = winner === left ? right : left
+      if (isDeleted(deletedEntries, id, winner.updatedAt)) continue
+      if (!booksById.has(winner.bookId)) continue
+      entriesById.set(id, winner)
+      deletedEntries.delete(id)
+      if (entryFingerprint(left) !== entryFingerprint(right)) {
+        const copy = conflictEntry(loser)
+        if (!entriesById.has(copy.id) && booksById.has(copy.bookId) && !isDeleted(deletedEntries, copy.id, copy.updatedAt)) {
+          entriesById.set(copy.id, copy)
+        }
+      }
+      continue
+    }
+
+    const entry = left ?? right
+    if (!entry) continue
+    if (isDeleted(deletedEntries, id, entry.updatedAt)) continue
+    if (!booksById.has(entry.bookId)) continue
+    entriesById.set(id, entry)
+    deletedEntries.delete(id)
+  }
+
+  // Preserve remote-only / local-only conflict copies that were already stored.
+  for (const entry of [...remote.entries, ...local.entries]) {
+    if (!isConflictId(entry.id) || entriesById.has(entry.id)) continue
+    if (!booksById.has(entry.bookId)) continue
+    if (isDeleted(deletedEntries, entry.id, entry.updatedAt)) continue
+    entriesById.set(entry.id, entry)
+  }
+
+  return {
+    books: orderBooks(local.books, remote.books, booksById),
+    entries: [...entriesById.values()],
+    deletedBooks: [...deletedBooks.values()],
+    deletedEntries: [...deletedEntries.values()],
+  }
 }
 
 export function sameStore(a: Store, b: Store) {

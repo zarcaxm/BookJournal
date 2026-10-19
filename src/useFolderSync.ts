@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import {
   clearFolderHandle,
   loadFolderHandle,
@@ -51,7 +51,7 @@ function syncErrorMessage(error: unknown) {
   return 'The folder could not be reached.'
 }
 
-export function useFolderSync(store: Store, replaceStore: (store: Store) => void): FolderSync {
+export function useFolderSync(store: Store, setStore: Dispatch<SetStateAction<Store>>): FolderSync {
   const supported = syncSupported()
   const [meta, setMeta] = useState<SyncMeta | null>(() => loadSyncMeta())
   const [status, setStatus] = useState<FolderSyncStatus>(() => {
@@ -61,16 +61,17 @@ export function useFolderSync(store: Store, replaceStore: (store: Store) => void
   const [error, setError] = useState<string | null>(null)
   const handleRef = useRef<FileSystemDirectoryHandle | null>(null)
   const storeRef = useRef(store)
-  const replaceRef = useRef(replaceStore)
+  const setStoreRef = useRef(setStore)
   const writeQueue = useRef<Promise<void>>(Promise.resolve())
+  const lastMergedJson = useRef<string | null>(null)
 
   useEffect(() => {
     storeRef.current = store
   }, [store])
 
   useEffect(() => {
-    replaceRef.current = replaceStore
-  }, [replaceStore])
+    setStoreRef.current = setStore
+  }, [setStore])
 
   const push = useCallback(async (requestPermission = false) => {
     const handle = handleRef.current
@@ -89,11 +90,24 @@ export function useFolderSync(store: Store, replaceStore: (store: Store) => void
           throw new SnapshotUnreadableError(snapshot.detail)
         }
 
-        const local = storeRef.current
-        const merged = snapshot.status === 'ready' ? mergeStores(local, snapshot.store) : local
-        if (!sameStore(merged, local)) {
-          replaceRef.current(merged)
+        const remote = snapshot.status === 'ready' ? snapshot.store : null
+        let merged!: Store
+        setStoreRef.current((prev) => {
+          merged = remote ? mergeStores(prev, remote) : prev
           storeRef.current = merged
+          if (sameStore(merged, prev)) return prev
+          lastMergedJson.current = JSON.stringify(merged)
+          return merged
+        })
+
+        if (remote && sameStore(merged, remote)) {
+          const next: SyncMeta = {
+            folderName: handle.name,
+            lastSyncedAt: snapshot.status === 'ready' ? snapshot.savedAt : null,
+          }
+          saveSyncMeta(next)
+          setMeta(next)
+          return
         }
 
         const savedAt = await writeSnapshot(handle, merged)
@@ -154,6 +168,10 @@ export function useFolderSync(store: Store, replaceStore: (store: Store) => void
 
   useEffect(() => {
     if (!handleRef.current) return
+    if (lastMergedJson.current !== null && JSON.stringify(store) === lastMergedJson.current) {
+      return
+    }
+    lastMergedJson.current = null
     const timer = window.setTimeout(() => {
       void push()
     }, 800)
