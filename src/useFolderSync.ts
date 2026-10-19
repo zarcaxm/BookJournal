@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
-import { flushSync } from 'react-dom'
 import {
   clearFolderHandle,
   loadFolderHandle,
@@ -120,16 +119,17 @@ export function useFolderSync(store: Store, setStore: Dispatch<SetStateAction<St
 
         const remote = snapshot.status === 'ready' ? snapshot.store : null
         const base = loadSyncBase()
-        let merged!: Store
-        flushSync(() => {
-          setStoreRef.current((prev) => {
-            merged = remote ? mergeStores(prev, remote, base) : prev
-            storeRef.current = merged
-            if (sameStore(merged, prev)) return prev
-            lastMergedJson.current = JSON.stringify(merged)
-            return merged
-          })
-        })
+        // Compute outside the updater: React may defer updaters after setStatus('syncing'),
+        // so capturing `merged` inside setStore left writeSnapshot(undefined) (blocker 1).
+        const local = storeRef.current
+        const merged: Store = remote ? mergeStores(local, remote, base) : local
+        if (!sameStore(merged, local)) {
+          storeRef.current = merged
+          lastMergedJson.current = JSON.stringify(merged)
+          setStoreRef.current((prev) =>
+            prev === local ? merged : remote ? mergeStores(prev, remote, base) : prev,
+          )
+        }
 
         if (connection !== connectionGeneration.current || handleRef.current !== handle) return
 

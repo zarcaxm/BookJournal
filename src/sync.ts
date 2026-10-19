@@ -225,7 +225,11 @@ function conflictEntry(loser: Entry): Entry {
     ...loser,
     id: `${root}__conflict__${stamp}`,
     title: conflictTitle(loser.title),
-    publishedTitle: loser.publishedTitle ? conflictTitle(loser.publishedTitle) : loser.publishedTitle,
+    // Keep conflicts out of the manuscript / PDF until the user resolves them.
+    publishedTitle: null,
+    publishedBody: null,
+    publishedAt: null,
+    status: 'draft',
   }
 }
 

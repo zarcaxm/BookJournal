@@ -3,7 +3,7 @@ import { createContext, useContext } from 'react'
 import { toDateKey } from './dates.ts'
 import { loadStore, saveStore, upsertTombstone } from './storage.ts'
 import type { Book, CoverId, DayDraft, Entry, PageId, View } from './types.ts'
-import { primaryEntryFor } from './types.ts'
+import { isConflictId, primaryEntryFor } from './types.ts'
 import { useFolderSync, type FolderSync } from './useFolderSync.ts'
 
 type JournalContextValue = {
@@ -125,7 +125,10 @@ export function JournalProvider({ children }: { children: ReactNode }) {
   const publishedEntries = useCallback(
     (bookId: string) =>
       entriesFor(bookId).filter(
-        (entry) => entry.status === 'published' && Boolean(entry.publishedBody?.trim() || entry.publishedTitle?.trim()),
+        (entry) =>
+          !isConflictId(entry.id) &&
+          entry.status === 'published' &&
+          Boolean(entry.publishedBody?.trim() || entry.publishedTitle?.trim()),
       ),
     [entriesFor],
   )
