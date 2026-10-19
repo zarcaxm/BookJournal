@@ -135,6 +135,48 @@ h1, h2, .cover-title {
 
 .shelf-count { margin: 8px 0 18px; color: var(--muted); }
 
+.sync-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 0 0 20px;
+  padding: 14px 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(251, 247, 240, 0.72);
+}
+
+.sync-card.compact { margin-bottom: 16px; padding: 10px 16px; background: rgba(251, 247, 240, 0.5); }
+
+.sync-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.sync-dot[data-status='synced'] { background: var(--forest); }
+.sync-dot[data-status='error'],
+.sync-dot[data-status='needs-permission'] { background: var(--oxblood); }
+.sync-dot[data-status='syncing'],
+.sync-dot[data-status='connecting'] {
+  background: var(--gold);
+  animation: sync-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes sync-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.sync-copy { flex: 1 1 240px; min-width: 0; }
+.sync-title { font-family: var(--text); font-size: 0.95rem; }
+.sync-detail { margin-top: 2px; color: var(--muted); font-size: 0.84rem; line-height: 1.4; }
+.sync-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.sync-card .btn { padding: 0.5rem 0.85rem; font-size: 0.86rem; }
+
 .shelf {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));

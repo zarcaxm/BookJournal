@@ -56,21 +56,26 @@ function cleanEntry(value: unknown): Entry | null {
   }
 }
 
+export function cleanStore(value: unknown): Store {
+  if (!value || typeof value !== 'object') return EMPTY
+  const parsed = value as Partial<Store>
+  const books = Array.isArray(parsed.books)
+    ? parsed.books.map(cleanBook).filter((book): book is Book => book !== null)
+    : []
+  const bookIds = new Set(books.map((book) => book.id))
+  const entries = Array.isArray(parsed.entries)
+    ? parsed.entries
+        .map(cleanEntry)
+        .filter((entry): entry is Entry => entry !== null && bookIds.has(entry.bookId))
+    : []
+  return { books, entries }
+}
+
 export function loadStore(): Store {
   try {
     const raw = localStorage.getItem(KEY)
     if (!raw) return EMPTY
-    const parsed = JSON.parse(raw) as Partial<Store>
-    const books = Array.isArray(parsed.books)
-      ? parsed.books.map(cleanBook).filter((book): book is Book => book !== null)
-      : []
-    const bookIds = new Set(books.map((book) => book.id))
-    const entries = Array.isArray(parsed.entries)
-      ? parsed.entries
-          .map(cleanEntry)
-          .filter((entry): entry is Entry => entry !== null && bookIds.has(entry.bookId))
-      : []
-    return { books, entries }
+    return cleanStore(JSON.parse(raw))
   } catch {
     return EMPTY
   }
