@@ -3,7 +3,7 @@
   --paper: #fbf7f0;
   --paper-2: #f3ece1;
   --ink: #221e1a;
-  --muted: #6d645a;
+  --muted: #5f564c; /* ≥ 4.5:1 on --bg, page tiles and the mode switch */
   --line: rgba(34, 30, 26, 0.12);
   --oxblood: #7d3228;
   --oxblood-deep: #63281f;
@@ -16,7 +16,7 @@
   --sans: "Outfit", "Avenir Next", sans-serif;
   --page: #fbf7f0;
   --page-ink: #221e1a;
-  --page-muted: #6d645a;
+  --page-muted: #5f564c;
   --page-line: rgba(34, 30, 26, 0.12);
   --page-font: var(--text);
   --page-title: var(--serif);
@@ -104,6 +104,17 @@ p, .lede { text-wrap: pretty; }
 .btn.ghost:hover:not(:disabled) { background: rgba(34, 30, 26, 0.06); color: var(--ink); }
 .btn.ghost.danger-quiet { color: var(--oxblood); }
 .btn.ghost.danger-quiet:hover:not(:disabled) { background: rgba(125, 50, 40, 0.08); color: var(--oxblood-deep); }
+
+/* On the page itself, ghost buttons follow the page style's colours (Night, Ruled, ...). */
+.composer .btn.ghost, .manuscript .btn.ghost { color: var(--page-muted); }
+.composer .btn.ghost:hover:not(:disabled),
+.manuscript .btn.ghost:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--page-ink) 8%, transparent);
+  color: var(--page-ink);
+}
+.manuscript .btn.ghost.danger-quiet { color: var(--oxblood); }
+.workspace[data-pages='night'] .btn.ghost.danger-quiet { color: #e39c8d; }
+.workspace[data-pages='night'] .btn.ghost.danger-quiet:hover:not(:disabled) { color: #f0b5a8; background: rgba(227, 156, 141, 0.12); }
 
 .icon-button {
   display: inline-grid;
@@ -338,7 +349,7 @@ p, .lede { text-wrap: pretty; }
 .workspace[data-pages='typewriter'] {
   --page: #f3ecdc;
   --page-ink: #2a241c;
-  --page-muted: #7a7064;
+  --page-muted: #6b6155;
   --page-line: rgba(42, 36, 28, 0.16);
   --page-font: var(--mono);
   --page-title: var(--mono);
