@@ -136,8 +136,12 @@ console.log('#20/#22/#26/#28 smoke')
       entries: [entry({ id: 'e1', bookId: 'b1', date: '2026-05-01', body: 'REMOTE TEXT', updatedAt: '2026-05-01T05:00:00.000Z' })],
     }),
   )
-  const firstBodies = firstConnect.entries.map((item) => item.body).join('\n')
-  assert(/LOCAL TEXT/.test(firstBodies) && /REMOTE TEXT/.test(firstBodies), 'unknown-base divergent same-id keeps both texts')
+  const firstShown = primaryEntryFor(firstConnect.entries, 'b1', '2026-05-01')
+  assert(
+    Boolean(firstShown && /LOCAL TEXT/.test(firstShown.body) && /REMOTE TEXT/.test(firstShown.body)),
+    'unknown-base divergent same-id: primaryEntryFor.body contains both',
+  )
+  assert(firstConnect.entries.every((item) => !isConflictId(item.id)), 'unknown-base fold leaves no hidden conflict copies')
 
   const deleted = mergeStores(
     store({ books: [book({ id: 'b1', title: 'Shared' })], deletedEntries: [{ id: 'e1', deletedAt: '2026-05-01T06:00:00.000Z' }] }),
@@ -163,8 +167,11 @@ console.log('#20/#22/#26/#28 smoke')
     }),
     concurrentBase,
   )
-  const bodies = concurrent.entries.map((item) => item.body)
-  assert(bodies.includes('A') && bodies.includes('B'), 'concurrent edits with base keep both bodies')
+  const concurrentShown = primaryEntryFor(concurrent.entries, 'b1', '2026-05-01')
+  assert(
+    Boolean(concurrentShown && /\bA\b/.test(concurrentShown.body) && /\bB\b/.test(concurrentShown.body)),
+    'concurrent edits with base: primaryEntryFor.body contains both',
+  )
 
   assert(sameStore(mergeStores(remote, remote), remote), 'identical merge is no-op')
 }

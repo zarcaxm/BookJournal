@@ -101,9 +101,11 @@ test('first-connect / unknown base: divergent same-id keeps both texts', () => {
   const local = store({ books: [book()], entries: [entry({ body: 'LOCAL TEXT', updatedAt: T(2) })] })
   const remote = store({ books: [book()], entries: [entry({ body: 'REMOTE TEXT', updatedAt: T(5) })] })
   const m = mergeStores(local, remote)
-  const bodies = m.entries.map((e) => e.body).join('\n')
-  assert.match(bodies, /LOCAL TEXT/)
-  assert.match(bodies, /REMOTE TEXT/)
+  const shown = primaryEntryFor(m.entries, 'b1', '2026-10-19')
+  assert.ok(shown)
+  assert.match(shown.body, /LOCAL TEXT/)
+  assert.match(shown.body, /REMOTE TEXT/)
+  assert.equal(conflicts(m).length, 0)
 })
 
 test('#26 concurrent edits with a sync base keep both bodies', () => {
@@ -115,9 +117,12 @@ test('#26 concurrent edits with a sync base keep both bodies', () => {
     entries: [entry({ body: 'device B text (fast clock)', updatedAt: T(9) }), old],
   })
   const m = mergeStores(local, remote, base)
-  const bodies = m.entries.map((e) => e.body)
-  assert.ok(bodies.includes('device A text'), "device A's text should survive somewhere")
-  assert.ok(bodies.includes('device B text (fast clock)'), "device B's text should survive")
+  const shown = primaryEntryFor(m.entries, 'b1', '2026-10-19')
+  assert.ok(shown)
+  assert.match(shown.body, /device A text/)
+  assert.match(shown.body, /device B text \(fast clock\)/)
+  assert.match(shown.body, /first loser/)
+  assert.equal(conflicts(m).length, 0)
 })
 
 test('#26 clock skew: deletion is not resurrected by a fast-clock remote stamp', () => {

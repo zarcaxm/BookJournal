@@ -40,15 +40,75 @@ const store = (over: Partial<Store> = {}): Store => ({
   ...over,
 })
 
-test('unknown base: divergent same-id keeps LOCAL and REMOTE text', () => {
+test('unknown base: divergent same-id folds both into primaryEntryFor body', () => {
   const local = store({ books: [book()], entries: [entry({ body: 'LOCAL TEXT', updatedAt: T(2) })] })
   const remote = store({ books: [book()], entries: [entry({ body: 'REMOTE TEXT', updatedAt: T(5) })] })
   const m = mergeStores(local, remote)
-  const bodies = m.entries.map((e) => e.body).join('\n')
-  assert.match(bodies, /LOCAL TEXT/)
-  assert.match(bodies, /REMOTE TEXT/)
-  assert.equal(m.entries.find((e) => e.id === 'e1')?.body, 'REMOTE TEXT')
-  assert.ok(m.entries.some((e) => isConflictId(e.id) && e.body.includes('LOCAL TEXT')))
+  assert.equal(m.entries.filter((e) => isConflictId(e.id)).length, 0)
+  const shown = primaryEntryFor(m.entries, 'b1', '2026-10-19')
+  assert.ok(shown)
+  assert.equal(shown.id, 'e1')
+  assert.match(shown.body, /LOCAL TEXT/)
+  assert.match(shown.body, /REMOTE TEXT/)
+})
+
+test('same-id conflict keeps winner published snapshot and folds loser published into draft', () => {
+  const local = store({
+    books: [book()],
+    entries: [
+      entry({
+        body: 'LOCAL DRAFT',
+        publishedTitle: 'Pub Local',
+        publishedBody: 'LOCAL PUBLISHED',
+        status: 'published',
+        publishedAt: T(1),
+        updatedAt: T(2),
+      }),
+    ],
+  })
+  const remote = store({
+    books: [book()],
+    entries: [
+      entry({
+        body: 'REMOTE DRAFT',
+        publishedTitle: 'Pub Remote',
+        publishedBody: 'REMOTE PUBLISHED',
+        status: 'published',
+        publishedAt: T(1),
+        updatedAt: T(5),
+      }),
+    ],
+  })
+  const m = mergeStores(local, remote)
+  const shown = primaryEntryFor(m.entries, 'b1', '2026-10-19')
+  assert.ok(shown)
+  assert.match(shown.body, /LOCAL DRAFT/)
+  assert.match(shown.body, /REMOTE DRAFT/)
+  assert.match(shown.body, /LOCAL PUBLISHED/)
+  assert.equal(shown.publishedBody, 'REMOTE PUBLISHED')
+  assert.equal(shown.publishedTitle, 'Pub Remote')
+  assert.equal(m.entries.filter((e) => isConflictId(e.id)).length, 0)
+})
+
+test('legacy __conflict__ copies are folded into root and tombstoned', () => {
+  const conflict = entry({
+    id: 'e1__conflict__old',
+    title: '[Conflict] Day',
+    body: 'HIDDEN LOSER',
+    updatedAt: T(1),
+  })
+  const local = store({
+    books: [book()],
+    entries: [entry({ body: 'ROOT DRAFT', updatedAt: T(3) }), conflict],
+  })
+  const remote = store({ books: [book()], entries: [entry({ body: 'ROOT DRAFT', updatedAt: T(3) }), conflict] })
+  const m = mergeStores(local, remote)
+  assert.equal(m.entries.filter((e) => isConflictId(e.id)).length, 0)
+  assert.ok(m.deletedEntries.some((t) => t.id === 'e1__conflict__old'))
+  const shown = primaryEntryFor(m.entries, 'b1', '2026-10-19')
+  assert.ok(shown)
+  assert.match(shown.body, /ROOT DRAFT/)
+  assert.match(shown.body, /HIDDEN LOSER/)
 })
 
 test('known base: ordinary local edit does not create a conflict', () => {
@@ -100,7 +160,7 @@ test('same-day collision preserves draft and published text in the accessible en
   )
 })
 
-test('repeated concurrent merge does not multiply conflict copies', () => {
+test('repeated concurrent merge stays stable with both texts in primary body', () => {
   const base = store({ books: [book()], entries: [entry({ body: 'base', updatedAt: T(0) })] })
   const local = store({ books: [book()], entries: [entry({ body: 'device A', updatedAt: T(3) })] })
   const remote = store({ books: [book()], entries: [entry({ body: 'device B', updatedAt: T(9) })] })
@@ -108,10 +168,12 @@ test('repeated concurrent merge does not multiply conflict copies', () => {
   const again = mergeStores(once, remote, base)
   const thrice = mergeStores(again, again, base)
   assert.ok(sameStore(again, thrice))
-  const conflictCount = once.entries.filter((e) => isConflictId(e.id)).length
-  assert.equal(again.entries.filter((e) => isConflictId(e.id)).length, conflictCount)
-  assert.ok(once.entries.some((e) => e.body.includes('device A')))
-  assert.ok(once.entries.some((e) => e.body.includes('device B')))
+  assert.equal(once.entries.filter((e) => isConflictId(e.id)).length, 0)
+  assert.equal(again.entries.filter((e) => isConflictId(e.id)).length, 0)
+  const shown = primaryEntryFor(once.entries, 'b1', '2026-10-19')
+  assert.ok(shown)
+  assert.match(shown.body, /device A/)
+  assert.match(shown.body, /device B/)
 })
 
 test('tombstone beats fast-clock remote stamp', () => {

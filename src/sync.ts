@@ -227,16 +227,6 @@ function recoverableContentKey(entry: Entry) {
   })
 }
 
-function shortHash(value: string) {
-  let hash = 0
-  for (let i = 0; i < value.length; i += 1) hash = (Math.imul(31, hash) + value.charCodeAt(i)) | 0
-  return Math.abs(hash).toString(36)
-}
-
-function conflictTitle(title: string) {
-  return title.startsWith('[Conflict] ') ? title : `[Conflict] ${title}`
-}
-
 function combineText(primary: string, secondary: string, label: string) {
   const left = primary.trim()
   const right = secondary.trim()
@@ -245,25 +235,22 @@ function combineText(primary: string, secondary: string, label: string) {
   return `${left}\n\n---\n${label}\n\n${right}`
 }
 
-function conflictEntry(loser: Entry): Entry {
-  const root = rootEntryId(loser.id)
-  const key = recoverableContentKey(loser)
-  const body = combineText(
-    loser.body,
-    loser.publishedBody && loser.publishedBody.trim() !== loser.body.trim() ? loser.publishedBody : '',
-    '[Published version]',
-  )
-  const titleBase = loser.title.replace(/^\[Conflict\]\s+/, '') || loser.publishedTitle || 'Conflict'
+/** Fold a divergent same-id (or legacy conflict) loser into the visible root draft body. */
+function foldLoserIntoRootDraft(winner: Entry, loser: Entry): Entry {
+  let body = combineText(winner.body, loser.body, '[Conflict from other device]')
+  const loserPublished = loser.publishedBody?.trim() ?? ''
+  if (loserPublished && loserPublished !== loser.body.trim() && !body.includes(loserPublished)) {
+    body = combineText(body, loserPublished, '[Conflict published from other device]')
+  }
   return {
-    ...loser,
-    id: `${root}__conflict__${shortHash(key)}`,
-    title: conflictTitle(titleBase),
+    ...winner,
     body,
-    // Recoverable in the draft body; stay out of manuscript until resolved.
-    publishedTitle: null,
-    publishedBody: null,
-    publishedAt: null,
-    status: 'draft',
+    // Keep the root's published snapshot until the user republishes.
+    publishedTitle: winner.publishedTitle,
+    publishedBody: winner.publishedBody,
+    publishedAt: winner.publishedAt,
+    status: winner.status,
+    updatedAt: winner.updatedAt >= loser.updatedAt ? winner.updatedAt : loser.updatedAt,
   }
 }
 
@@ -367,20 +354,30 @@ function foldSameDayEntries(entries: Entry[], deletedEntries: Map<string, Tombst
     folded.push(winner)
   }
 
-  const primaryById = new Map(folded.map((entry) => [entry.id, entry]))
-  const keptConflicts: Entry[] = []
-  const seenConflictKeys = new Set<string>()
-  for (const entry of conflicts) {
-    const key = recoverableContentKey(entry)
-    if (seenConflictKeys.has(key) || alreadyPreserves(primaryById, entry)) {
-      deletedEntries.set(entry.id, { id: entry.id, deletedAt: now })
+  // Absorb legacy __conflict__ copies into the visible primary, then tombstone them.
+  for (const conflict of conflicts) {
+    const rootId = rootEntryId(conflict.id)
+    const index = folded.findIndex(
+      (entry) => entry.id === rootId || (entry.bookId === conflict.bookId && entry.date === conflict.date),
+    )
+    if (index === -1) {
+      // No root left — promote recoverable text onto the root id so it stays editable.
+      folded.push({
+        ...conflict,
+        id: rootId,
+        title: conflict.title.replace(/^\[Conflict\]\s+/, '') || conflict.title,
+      })
+      deletedEntries.set(conflict.id, { id: conflict.id, deletedAt: now })
       continue
     }
-    seenConflictKeys.add(key)
-    keptConflicts.push(entry)
+    const target = folded[index]
+    if (!alreadyPreserves(new Map([[target.id, target]]), conflict)) {
+      folded[index] = foldLoserIntoRootDraft(target, conflict)
+    }
+    deletedEntries.set(conflict.id, { id: conflict.id, deletedAt: now })
   }
 
-  return [...folded, ...keptConflicts]
+  return folded
 }
 
 function alreadyPreserves(entries: Map<string, Entry>, loser: Entry) {
@@ -456,13 +453,12 @@ export function mergeStores(local: Store, remote: Store, base: Store | null = nu
         const winner = newerByUpdatedAt(left, right)
         const loser = winner === left ? right : left
         if (booksById.has(winner.bookId)) {
-          entriesById.set(id, winner)
-          if (!alreadyPreserves(entriesById, loser)) {
-            const copy = conflictEntry(loser)
-            if (!deletedEntries.has(copy.id) && booksById.has(copy.bookId) && !entriesById.has(copy.id)) {
-              entriesById.set(copy.id, copy)
-            }
-          }
+          entriesById.set(
+            id,
+            alreadyPreserves(new Map([[winner.id, winner]]), loser)
+              ? winner
+              : foldLoserIntoRootDraft(winner, loser),
+          )
         }
         continue
       }
