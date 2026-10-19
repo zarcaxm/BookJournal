@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createContext, useContext } from 'react'
 import { toDateKey } from './dates.ts'
-import { loadStore, saveStore, upsertTombstone } from './storage.ts'
+import { advanceClock, loadStore, nextIso, saveStore, upsertTombstone } from './storage.ts'
 import type { Book, CoverId, DayDraft, Entry, PageId, View } from './types.ts'
 import { isConflictId, primaryEntryFor } from './types.ts'
 import { useFolderSync, type FolderSync } from './useFolderSync.ts'
@@ -29,12 +29,12 @@ type JournalContextValue = {
 
 const JournalContext = createContext<JournalContextValue | null>(null)
 
-function nowIso() {
-  return new Date().toISOString()
-}
-
 export function JournalProvider({ children }: { children: ReactNode }) {
-  const [store, setStore] = useState(loadStore)
+  const [store, setStore] = useState(() => {
+    const initial = loadStore()
+    advanceClock(initial)
+    return initial
+  })
   const [view, setView] = useState<View>({ name: 'library' })
   const [selectedDate, setSelectedDate] = useState(() => toDateKey(new Date()))
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -62,7 +62,7 @@ export function JournalProvider({ children }: { children: ReactNode }) {
 
   const createBook = useCallback(
     (input: { title: string; author: string; intention: string; cover: CoverId; pages: PageId }) => {
-      const createdAt = nowIso()
+      const createdAt = nextIso()
       const book: Book = {
         id: crypto.randomUUID(),
         title: input.title.trim(),
@@ -88,14 +88,14 @@ export function JournalProvider({ children }: { children: ReactNode }) {
     setStore((prev) => ({
       ...prev,
       books: prev.books.map((book) =>
-        book.id === bookId ? { ...book, pages, updatedAt: nowIso() } : book,
+        book.id === bookId ? { ...book, pages, updatedAt: nextIso() } : book,
       ),
     }))
   }, [])
 
   const deleteBook = useCallback((bookId: string) => {
     setStore((prev) => {
-      const now = nowIso()
+      const now = nextIso()
       const removedEntries = prev.entries.filter((entry) => entry.bookId === bookId)
       let deletedEntries = prev.deletedEntries
       for (const entry of removedEntries) {
@@ -148,7 +148,7 @@ export function JournalProvider({ children }: { children: ReactNode }) {
           publishedTitle: null,
           publishedBody: null,
           status: 'draft',
-          updatedAt: nowIso(),
+          updatedAt: nextIso(),
           publishedAt: null,
         }
         return {
@@ -161,14 +161,14 @@ export function JournalProvider({ children }: { children: ReactNode }) {
         return {
           ...prev,
           entries: prev.entries.filter((entry) => entry.id !== existing.id),
-          deletedEntries: upsertTombstone(prev.deletedEntries, existing.id, nowIso()),
+          deletedEntries: upsertTombstone(prev.deletedEntries, existing.id, nextIso()),
         }
       }
       if (existing.title === draft.title && existing.body === draft.body) return prev
       return {
         ...prev,
         entries: prev.entries.map((entry) =>
-          entry.id === existing.id ? { ...entry, title: draft.title, body: draft.body, updatedAt: nowIso() } : entry,
+          entry.id === existing.id ? { ...entry, title: draft.title, body: draft.body, updatedAt: nextIso() } : entry,
         ),
       }
     })
@@ -178,7 +178,7 @@ export function JournalProvider({ children }: { children: ReactNode }) {
     if (!draft.title.trim() || !draft.body.trim()) return
     setStore((prev) => {
       const existing = primaryEntryFor(prev.entries, bookId, date)
-      const publishedAt = existing?.publishedAt ?? nowIso()
+      const publishedAt = existing?.publishedAt ?? nextIso()
       if (!existing) {
         const created: Entry = {
           id: crypto.randomUUID(),
@@ -189,7 +189,7 @@ export function JournalProvider({ children }: { children: ReactNode }) {
           publishedTitle: draft.title,
           publishedBody: draft.body,
           status: 'published',
-          updatedAt: nowIso(),
+          updatedAt: nextIso(),
           publishedAt,
         }
         return {
@@ -209,7 +209,7 @@ export function JournalProvider({ children }: { children: ReactNode }) {
                 publishedTitle: draft.title,
                 publishedBody: draft.body,
                 status: 'published',
-                updatedAt: nowIso(),
+                updatedAt: nextIso(),
                 publishedAt,
               }
             : entry,
@@ -226,7 +226,7 @@ export function JournalProvider({ children }: { children: ReactNode }) {
         return {
           ...prev,
           entries: prev.entries.filter((entry) => entry.id !== entryId),
-          deletedEntries: upsertTombstone(prev.deletedEntries, entryId, nowIso()),
+          deletedEntries: upsertTombstone(prev.deletedEntries, entryId, nextIso()),
         }
       }
       return {
@@ -239,7 +239,7 @@ export function JournalProvider({ children }: { children: ReactNode }) {
                 publishedTitle: null,
                 publishedBody: null,
                 publishedAt: null,
-                updatedAt: nowIso(),
+                updatedAt: nextIso(),
               }
             : entry,
         ),

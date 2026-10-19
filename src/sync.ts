@@ -1,4 +1,4 @@
-import { cleanStore } from './storage.ts'
+import { advanceClock, cleanStore, nextIso } from './storage.ts'
 import type { Book, Entry, Store, Tombstone } from './types.ts'
 import { isConflictId, rootEntryId } from './types.ts'
 
@@ -214,18 +214,52 @@ function entryFingerprint(entry: Entry) {
   })
 }
 
+/** Stable content identity for deduping conflict copies across retries. */
+function recoverableContentKey(entry: Entry) {
+  return JSON.stringify({
+    bookId: entry.bookId,
+    date: entry.date,
+    title: entry.title.replace(/^\[Conflict\]\s+/, ''),
+    body: entry.body,
+    publishedTitle: entry.publishedTitle?.replace(/^\[Conflict\]\s+/, '') ?? null,
+    publishedBody: entry.publishedBody,
+    status: entry.status,
+  })
+}
+
+function shortHash(value: string) {
+  let hash = 0
+  for (let i = 0; i < value.length; i += 1) hash = (Math.imul(31, hash) + value.charCodeAt(i)) | 0
+  return Math.abs(hash).toString(36)
+}
+
 function conflictTitle(title: string) {
   return title.startsWith('[Conflict] ') ? title : `[Conflict] ${title}`
 }
 
+function combineText(primary: string, secondary: string, label: string) {
+  const left = primary.trim()
+  const right = secondary.trim()
+  if (!right || left === right) return primary
+  if (!left) return secondary
+  return `${left}\n\n---\n${label}\n\n${right}`
+}
+
 function conflictEntry(loser: Entry): Entry {
   const root = rootEntryId(loser.id)
-  const stamp = loser.updatedAt.replace(/[:.]/g, '-')
+  const key = recoverableContentKey(loser)
+  const body = combineText(
+    loser.body,
+    loser.publishedBody && loser.publishedBody.trim() !== loser.body.trim() ? loser.publishedBody : '',
+    '[Published version]',
+  )
+  const titleBase = loser.title.replace(/^\[Conflict\]\s+/, '') || loser.publishedTitle || 'Conflict'
   return {
     ...loser,
-    id: `${root}__conflict__${stamp}`,
-    title: conflictTitle(loser.title),
-    // Keep conflicts out of the manuscript / PDF until the user resolves them.
+    id: `${root}__conflict__${shortHash(key)}`,
+    title: conflictTitle(titleBase),
+    body,
+    // Recoverable in the draft body; stay out of manuscript until resolved.
     publishedTitle: null,
     publishedBody: null,
     publishedAt: null,
@@ -257,6 +291,46 @@ function orderBooks(local: Book[], remote: Book[], booksById: Map<string, Book>)
   return books
 }
 
+function foldTwo(winner: Entry, loser: Entry): Entry {
+  const publishedBody =
+    winner.publishedBody?.trim()
+      ? loser.publishedBody?.trim() && loser.publishedBody.trim() !== winner.publishedBody.trim()
+        ? combineText(winner.publishedBody, loser.publishedBody, '[Conflict published from other device]')
+        : winner.publishedBody
+      : loser.publishedBody
+  const publishedTitle =
+    winner.publishedTitle?.trim()
+      ? loser.publishedTitle?.trim() && loser.publishedTitle.trim() !== winner.publishedTitle.trim()
+        ? `${winner.publishedTitle} / ${loser.publishedTitle}`
+        : winner.publishedTitle
+      : loser.publishedTitle
+
+  let body = combineText(winner.body, loser.body, '[Conflict from other device]')
+  if (loser.publishedBody?.trim() && loser.publishedBody.trim() !== loser.body.trim()) {
+    body = combineText(body, loser.publishedBody, '[Conflict published from other device]')
+  }
+  if (winner.publishedBody?.trim() && winner.publishedBody.trim() !== winner.body.trim() && publishedBody !== winner.publishedBody) {
+    // winner published already represented in publishedBody field
+  }
+
+  const title =
+    winner.title.trim() === loser.title.trim()
+      ? winner.title
+      : [winner.title.trim(), loser.title.trim()].filter(Boolean).join(' / ')
+
+  const published = Boolean(publishedBody?.trim() || publishedTitle?.trim())
+  return {
+    ...winner,
+    title,
+    body,
+    publishedTitle: published ? publishedTitle : null,
+    publishedBody: published ? publishedBody : null,
+    publishedAt: winner.publishedAt ?? loser.publishedAt,
+    status: published ? 'published' : winner.status === 'published' || loser.status === 'published' ? 'published' : 'draft',
+    updatedAt: winner.updatedAt >= loser.updatedAt ? winner.updatedAt : loser.updatedAt,
+  }
+}
+
 function foldSameDayEntries(entries: Entry[], deletedEntries: Map<string, Tombstone>) {
   const conflicts: Entry[] = []
   const primary: Entry[] = []
@@ -274,7 +348,7 @@ function foldSameDayEntries(entries: Entry[], deletedEntries: Map<string, Tombst
   }
 
   const folded: Entry[] = []
-  const now = new Date().toISOString()
+  const now = nextIso()
   for (const group of byDay.values()) {
     if (group.length === 1) {
       folded.push(group[0])
@@ -287,28 +361,51 @@ function foldSameDayEntries(entries: Entry[], deletedEntries: Map<string, Tombst
         deletedEntries.set(loser.id, { id: loser.id, deletedAt: now })
         continue
       }
-      const appendedBody = [winner.body.trim(), '---', '[Conflict from other device]', loser.body.trim()]
-        .filter(Boolean)
-        .join('\n\n')
-      const appendedTitle =
-        winner.title.trim() === loser.title.trim()
-          ? winner.title
-          : [winner.title.trim(), loser.title.trim()].filter(Boolean).join(' / ')
-      winner = {
-        ...winner,
-        title: appendedTitle,
-        body: appendedBody,
-        updatedAt: winner.updatedAt >= loser.updatedAt ? winner.updatedAt : loser.updatedAt,
-      }
+      winner = foldTwo(winner, loser)
       deletedEntries.set(loser.id, { id: loser.id, deletedAt: now })
     }
     folded.push(winner)
   }
 
-  return [...folded, ...conflicts]
+  const primaryById = new Map(folded.map((entry) => [entry.id, entry]))
+  const keptConflicts: Entry[] = []
+  const seenConflictKeys = new Set<string>()
+  for (const entry of conflicts) {
+    const key = recoverableContentKey(entry)
+    if (seenConflictKeys.has(key) || alreadyPreserves(primaryById, entry)) {
+      deletedEntries.set(entry.id, { id: entry.id, deletedAt: now })
+      continue
+    }
+    seenConflictKeys.add(key)
+    keptConflicts.push(entry)
+  }
+
+  return [...folded, ...keptConflicts]
+}
+
+function alreadyPreserves(entries: Map<string, Entry>, loser: Entry) {
+  const key = recoverableContentKey(loser)
+  const loserBody = loser.body.trim()
+  const loserPublished = loser.publishedBody?.trim() ?? ''
+  for (const entry of entries.values()) {
+    if (entry.id === loser.id) continue
+    if (recoverableContentKey(entry) === key) return true
+    const sameDay = entry.bookId === loser.bookId && entry.date === loser.date
+    const relatedConflict = isConflictId(entry.id) && rootEntryId(entry.id) === rootEntryId(loser.id)
+    if (!sameDay && !relatedConflict) continue
+    if (!loserBody || !entry.body.includes(loserBody)) continue
+    if (!loserPublished || entry.body.includes(loserPublished) || entry.publishedBody?.includes(loserPublished)) {
+      return true
+    }
+  }
+  return false
 }
 
 export function mergeStores(local: Store, remote: Store, base: Store | null = null): Store {
+  advanceClock(local)
+  advanceClock(remote)
+  if (base) advanceClock(base)
+
   const deletedBooks = mergeTombstones(local.deletedBooks, remote.deletedBooks)
   const deletedEntries = mergeTombstones(local.deletedEntries, remote.deletedEntries)
   const baseEntries = new Map((base?.entries ?? []).map((entry) => [entry.id, entry]))
@@ -357,15 +454,18 @@ export function mergeStores(local: Store, remote: Store, base: Store | null = nu
         const loser = winner === left ? right : left
         if (booksById.has(winner.bookId)) {
           entriesById.set(id, winner)
-          const copy = conflictEntry(loser)
-          if (!deletedEntries.has(copy.id) && booksById.has(copy.bookId) && !entriesById.has(copy.id)) {
-            entriesById.set(copy.id, copy)
+          if (!alreadyPreserves(entriesById, loser)) {
+            const copy = conflictEntry(loser)
+            if (!deletedEntries.has(copy.id) && booksById.has(copy.bookId) && !entriesById.has(copy.id)) {
+              entriesById.set(copy.id, copy)
+            }
           }
         }
         continue
       }
 
-      const chosen = localChanged && !remoteChanged ? left : remoteChanged && !localChanged ? right : newerByUpdatedAt(left, right)
+      const chosen =
+        localChanged && !remoteChanged ? left : remoteChanged && !localChanged ? right : newerByUpdatedAt(left, right)
       if (booksById.has(chosen.bookId)) entriesById.set(id, chosen)
       continue
     }
@@ -377,13 +477,14 @@ export function mergeStores(local: Store, remote: Store, base: Store | null = nu
   }
 
   const folded = foldSameDayEntries([...entriesById.values()], deletedEntries)
-
-  return {
+  const merged = {
     books: orderBooks(local.books, remote.books, booksById),
     entries: folded,
     deletedBooks: [...deletedBooks.values()],
     deletedEntries: [...deletedEntries.values()],
   }
+  advanceClock(merged)
+  return merged
 }
 
 export function sameStore(a: Store, b: Store) {

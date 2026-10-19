@@ -126,9 +126,12 @@ export function useFolderSync(store: Store, setStore: Dispatch<SetStateAction<St
         if (!sameStore(merged, local)) {
           storeRef.current = merged
           lastMergedJson.current = JSON.stringify(merged)
-          setStoreRef.current((prev) =>
-            prev === local ? merged : remote ? mergeStores(prev, remote, base) : prev,
-          )
+          setStoreRef.current((prev) => {
+            const next = prev === local ? merged : remote ? mergeStores(prev, remote, base) : prev
+            storeRef.current = next
+            if (!sameStore(next, prev)) lastMergedJson.current = JSON.stringify(next)
+            return sameStore(next, prev) ? prev : next
+          })
         }
 
         if (connection !== connectionGeneration.current || handleRef.current !== handle) return
@@ -229,22 +232,22 @@ export function useFolderSync(store: Store, setStore: Dispatch<SetStateAction<St
     setError(null)
     try {
       const handle = await pickSyncFolder()
-      const permission = await permissionState(handle)
-      if (permission !== 'granted') {
-        setError('Permission to write to the folder was not granted.')
-        setStatus('needs-permission')
-        return
-      }
       handleRef.current = handle
       connectionGeneration.current += 1
+      const next: SyncMeta = { folderName: handle.name, lastSyncedAt: null }
+      saveSyncMeta(next)
+      setMeta(next)
       try {
         await saveFolderHandle(handle)
       } catch {
         // The folder still works for this session if the browser cannot remember it.
       }
-      const next: SyncMeta = { folderName: handle.name, lastSyncedAt: null }
-      saveSyncMeta(next)
-      setMeta(next)
+      const permission = await permissionState(handle, true)
+      if (permission !== 'granted') {
+        setError('Permission to write to the folder was not granted.')
+        setStatus('needs-permission')
+        return
+      }
 
       await push()
     } catch (cause) {

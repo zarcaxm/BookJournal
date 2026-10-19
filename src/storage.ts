@@ -16,6 +16,32 @@ const PAGE_IDS = new Set<string>(PAGES.map((pages) => pages.id))
 
 export const EMPTY_STORE: Store = { books: [], entries: [], deletedBooks: [], deletedEntries: [] }
 
+let clockWatermark = 0
+
+function considerIso(value: string | null | undefined) {
+  if (!value) return
+  const time = Date.parse(value)
+  if (!Number.isNaN(time) && time > clockWatermark) clockWatermark = time
+}
+
+/** Keep local stamps ahead of anything already seen (incl. fast-clock remotes). */
+export function advanceClock(store: Store) {
+  for (const book of store.books) considerIso(book.updatedAt)
+  for (const entry of store.entries) {
+    considerIso(entry.updatedAt)
+    considerIso(entry.publishedAt)
+  }
+  for (const item of store.deletedBooks) considerIso(item.deletedAt)
+  for (const item of store.deletedEntries) considerIso(item.deletedAt)
+}
+
+export function nextIso() {
+  const now = Date.now()
+  const next = Math.max(now, clockWatermark + 1)
+  clockWatermark = next
+  return new Date(next).toISOString()
+}
+
 function isCover(value: string): value is CoverId {
   return COVER_IDS.has(value)
 }
