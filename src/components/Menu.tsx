@@ -96,8 +96,9 @@ export function Menu({ label, items, align = 'end', className }: MenuProps) {
         close(true)
         break
       case 'Tab':
-        // Let focus move on naturally, but don't leave the menu hanging open.
-        close(false)
+        // Put focus back on the trigger first so the browser's Tab moves on from there,
+        // not from the top of the page once the focused item unmounts.
+        close(true)
         break
     }
   }
