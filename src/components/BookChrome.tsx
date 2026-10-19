@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { useJournal } from '../journal.tsx'
 import type { Book } from '../types.ts'
 import { ExportButton } from './ExportButton.tsx'
+import { Icon } from './Icon.tsx'
 import { PagePicker } from './PagePicker.tsx'
 import { SyncStatus } from './SyncStatus.tsx'
 
@@ -20,7 +21,8 @@ export function BookChrome({
   return (
     <div className="workspace" data-pages={book.pages}>
       <header className="bookbar">
-        <button type="button" className="text-button back" onClick={openLibrary}>
+        <button type="button" className="btn ghost small back" onClick={openLibrary}>
+          <Icon name="arrow-left" size={16} />
           Shelf
         </button>
         <div className="bookbar-title">
