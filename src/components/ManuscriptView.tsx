@@ -53,7 +53,7 @@ export function ManuscriptView({ bookId }: { bookId: string }) {
                     <p key={index}>{paragraph}</p>
                   ))}
                   {pending ? (
-                    <button type="button" className="text-button" onClick={() => openJournal(book.id, entry.date)}>
+                    <button type="button" className="btn ghost small open-day" onClick={() => openJournal(book.id, entry.date)}>
                       Open this day
                     </button>
                   ) : null}
@@ -64,7 +64,7 @@ export function ManuscriptView({ bookId }: { bookId: string }) {
         )}
 
         <footer className="manuscript-foot">
-          <button type="button" className="text-button danger-text" onClick={() => setConfirming(true)}>
+          <button type="button" className="btn ghost small danger-quiet" onClick={() => setConfirming(true)}>
             Delete this book
           </button>
         </footer>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { formatLong, wordCount } from '../dates.ts'
 import { entryInBook, type DayDraft, type Entry } from '../types.ts'
 import { ConfirmDialog } from './ConfirmDialog.tsx'
@@ -20,6 +20,7 @@ export function Composer({
   const [body, setBody] = useState(entry?.body ?? '')
   const [notice, setNotice] = useState<string | null>(null)
   const [confirmingRemove, setConfirmingRemove] = useState(false)
+  const bodyRef = useRef<HTMLTextAreaElement>(null)
   const draftRef = useRef<DayDraft>({ title, body })
   const savedRef = useRef<DayDraft>({ title: entry?.title ?? '', body: entry?.body ?? '' })
   draftRef.current = { title, body }
@@ -38,6 +39,14 @@ export function Composer({
       flush()
     }
   }, [title, body, onSave])
+
+  // Grow the page with the writing. Browsers without `field-sizing: content` get a JS fallback.
+  useLayoutEffect(() => {
+    const textarea = bodyRef.current
+    if (!textarea || CSS.supports('field-sizing', 'content')) return
+    textarea.style.height = 'auto'
+    textarea.style.height = `${textarea.scrollHeight}px`
+  }, [body])
 
   const inBook = entry ? entryInBook(entry) : false
   const dirty = inBook && (title !== (entry?.publishedTitle ?? '') || body !== (entry?.publishedBody ?? ''))
@@ -76,6 +85,7 @@ export function Composer({
         spellCheck
       />
       <textarea
+        ref={bodyRef}
         value={body}
         onChange={(event) => {
           setBody(event.target.value)

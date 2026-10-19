@@ -24,7 +24,6 @@ function BookCard({ book, onDelete }: { book: Book; onDelete: (book: Book) => vo
   return (
     <article className="volume">
       <button type="button" className="cover" onClick={() => openJournal(book.id)} style={{ background: cover.cloth, color: cover.foil }}>
-        <span className="cover-kicker">Book</span>
         <span className="cover-title">{book.title}</span>
         <span className="cover-author">{book.author || 'Unsigned'}</span>
       </button>
