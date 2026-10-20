@@ -27,6 +27,12 @@ export type Book = {
   cover: CoverId
   pages: PageId
   createdAt: string
+  updatedAt: string
+}
+
+export type Tombstone = {
+  id: string
+  deletedAt: string
 }
 
 export type EntryStatus = 'draft' | 'published'
@@ -52,6 +58,27 @@ export type DayDraft = {
 export type Store = {
   books: Book[]
   entries: Entry[]
+  deletedBooks: Tombstone[]
+  deletedEntries: Tombstone[]
+}
+
+export function isConflictId(id: string) {
+  return id.includes('__conflict')
+}
+
+export function rootEntryId(id: string) {
+  const index = id.indexOf('__conflict')
+  return index === -1 ? id : id.slice(0, index)
+}
+
+export function primaryEntryFor(entries: Entry[], bookId: string, date: string) {
+  const matches = entries.filter((entry) => entry.bookId === bookId && entry.date === date)
+  if (matches.length === 0) return undefined
+  return matches.sort((a, b) => {
+    const conflictDelta = Number(isConflictId(a.id)) - Number(isConflictId(b.id))
+    if (conflictDelta !== 0) return conflictDelta
+    return b.updatedAt.localeCompare(a.updatedAt)
+  })[0]
 }
 
 export type View =

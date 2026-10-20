@@ -48,7 +48,7 @@ Then open the URL printed by Vite (normally `http://localhost:4173`). `vite prev
 
 ## Data and offline behavior
 
-Book and entry data is stored only in the browser's `localStorage`, under the key `bookjournal.v1`. It is not synced to a server and is specific to the browser profile and site origin. Clearing site data will remove the journal data for that origin, so export important manuscripts as PDFs before clearing browser storage.
+Book and entry data is stored in the browser's `localStorage`, under the key `bookjournal.v1`, and is specific to the browser profile and site origin. Optional folder sync also keeps a copy on disk; BookJournal does not upload directly to a server. Clearing site data removes the journal data for that origin, so back up important writing before clearing browser storage. PDF exports contain the published manuscript, not unpublished drafts.
 
 The PWA service worker caches the built application for offline use and checks for updates automatically. PWA installation and service workers require HTTPS in production; `localhost` is treated as a secure context during development. The UI uses Google Fonts, so the first load is best done with an internet connection; fetched font resources are cached by the service worker.
 
@@ -57,21 +57,24 @@ The PWA service worker caches the built application for offline use and checks f
 BookJournal can mirror every book and entry into a folder on disk, so a local
 Google Drive folder can keep a copy for you.
 
-1. Open the app in Chrome or Edge (the File System Access API is required).
+1. Open the app in Chrome or Edge over HTTPS or on `localhost` (the File System Access API is required).
 2. On the shelf, press **Choose folder**.
 3. Pick the folder Google Drive for desktop syncs to your computer.
 4. Writing in the journal then backs up to `bookjournal.json` inside that folder.
 
 The status bar appears on the shelf and inside each book:
 
-- **Synced** — the folder has the latest copy.
+- **Synced** — the local folder has the latest copy; this does not confirm that Google Drive has uploaded it.
 - **Syncing** — a change is being written; saves are debounced.
 - **Access paused** — the browser needs the folder confirmed again; press **Allow access**.
 - **Unavailable** — the browser does not support folder access.
 
 Notes:
 
-- Connecting a folder to an empty browser restores the entries already in the folder; otherwise the browser copy is written to the folder.
+- Connecting reads the existing folder snapshot and combines it with the browser journal before writing. An empty browser can restore from the folder.
+- Use **Sync now** to bring in changes made on another device before continuing to write. Allow Google Drive to finish transferring the file between computers; BookJournal does not coordinate simultaneous cloud uploads.
+- Damaged or unrecognized snapshot files pause sync instead of being overwritten.
+- **Disconnect** stops folder sync without deleting the browser journal or the snapshot on disk.
 - The browser exposes only the folder name, not the full path.
 - The write goes to the local Drive folder; the Drive client uploads it from there.
 

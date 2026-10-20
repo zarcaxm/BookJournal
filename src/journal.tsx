@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createContext, useContext } from 'react'
 import { toDateKey } from './dates.ts'
-import { loadStore, saveStore } from './storage.ts'
+import { advanceClock, loadStore, nextIso, saveStore, upsertTombstone } from './storage.ts'
 import type { Book, CoverId, DayDraft, Entry, PageId, View } from './types.ts'
+import { isConflictId, primaryEntryFor } from './types.ts'
 import { useFolderSync, type FolderSync } from './useFolderSync.ts'
 
 type JournalContextValue = {
@@ -28,12 +29,12 @@ type JournalContextValue = {
 
 const JournalContext = createContext<JournalContextValue | null>(null)
 
-function nowIso() {
-  return new Date().toISOString()
-}
-
 export function JournalProvider({ children }: { children: ReactNode }) {
-  const [store, setStore] = useState(loadStore)
+  const [store, setStore] = useState(() => {
+    const initial = loadStore()
+    advanceClock(initial)
+    return initial
+  })
   const [view, setView] = useState<View>({ name: 'library' })
   const [selectedDate, setSelectedDate] = useState(() => toDateKey(new Date()))
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -61,6 +62,7 @@ export function JournalProvider({ children }: { children: ReactNode }) {
 
   const createBook = useCallback(
     (input: { title: string; author: string; intention: string; cover: CoverId; pages: PageId }) => {
+      const createdAt = nextIso()
       const book: Book = {
         id: crypto.randomUUID(),
         title: input.title.trim(),
@@ -68,9 +70,14 @@ export function JournalProvider({ children }: { children: ReactNode }) {
         intention: input.intention.trim(),
         cover: input.cover,
         pages: input.pages,
-        createdAt: nowIso(),
+        createdAt,
+        updatedAt: createdAt,
       }
-      setStore((prev) => ({ ...prev, books: [book, ...prev.books] }))
+      setStore((prev) => ({
+        ...prev,
+        books: [book, ...prev.books],
+        deletedBooks: prev.deletedBooks.filter((item) => item.id !== book.id),
+      }))
       setSelectedDate(toDateKey(new Date()))
       setView({ name: 'journal', bookId: book.id })
     },
@@ -80,20 +87,32 @@ export function JournalProvider({ children }: { children: ReactNode }) {
   const setBookPages = useCallback((bookId: string, pages: PageId) => {
     setStore((prev) => ({
       ...prev,
-      books: prev.books.map((book) => (book.id === bookId ? { ...book, pages } : book)),
+      books: prev.books.map((book) =>
+        book.id === bookId ? { ...book, pages, updatedAt: nextIso() } : book,
+      ),
     }))
   }, [])
 
   const deleteBook = useCallback((bookId: string) => {
-    setStore((prev) => ({
-      books: prev.books.filter((book) => book.id !== bookId),
-      entries: prev.entries.filter((entry) => entry.bookId !== bookId),
-    }))
+    setStore((prev) => {
+      const now = nextIso()
+      const removedEntries = prev.entries.filter((entry) => entry.bookId === bookId)
+      let deletedEntries = prev.deletedEntries
+      for (const entry of removedEntries) {
+        deletedEntries = upsertTombstone(deletedEntries, entry.id, now)
+      }
+      return {
+        books: prev.books.filter((book) => book.id !== bookId),
+        entries: prev.entries.filter((entry) => entry.bookId !== bookId),
+        deletedBooks: upsertTombstone(prev.deletedBooks, bookId, now),
+        deletedEntries,
+      }
+    })
     setView({ name: 'library' })
   }, [])
 
   const entryFor = useCallback(
-    (bookId: string, date: string) => store.entries.find((entry) => entry.bookId === bookId && entry.date === date),
+    (bookId: string, date: string) => primaryEntryFor(store.entries, bookId, date),
     [store.entries],
   )
 
@@ -106,14 +125,17 @@ export function JournalProvider({ children }: { children: ReactNode }) {
   const publishedEntries = useCallback(
     (bookId: string) =>
       entriesFor(bookId).filter(
-      (entry) => entry.status === 'published' && Boolean(entry.publishedBody?.trim() || entry.publishedTitle?.trim()),
-    ),
+        (entry) =>
+          !isConflictId(entry.id) &&
+          entry.status === 'published' &&
+          Boolean(entry.publishedBody?.trim() || entry.publishedTitle?.trim()),
+      ),
     [entriesFor],
   )
 
   const saveDay = useCallback((bookId: string, date: string, draft: DayDraft) => {
     setStore((prev) => {
-      const existing = prev.entries.find((entry) => entry.bookId === bookId && entry.date === date)
+      const existing = primaryEntryFor(prev.entries, bookId, date)
       const empty = !draft.title.trim() && !draft.body.trim()
       if (!existing) {
         if (empty) return prev
@@ -126,19 +148,27 @@ export function JournalProvider({ children }: { children: ReactNode }) {
           publishedTitle: null,
           publishedBody: null,
           status: 'draft',
-          updatedAt: nowIso(),
+          updatedAt: nextIso(),
           publishedAt: null,
         }
-        return { ...prev, entries: [...prev.entries, created] }
+        return {
+          ...prev,
+          entries: [...prev.entries, created],
+          deletedEntries: prev.deletedEntries.filter((item) => item.id !== created.id),
+        }
       }
       if (empty && existing.status === 'draft') {
-        return { ...prev, entries: prev.entries.filter((entry) => entry.id !== existing.id) }
+        return {
+          ...prev,
+          entries: prev.entries.filter((entry) => entry.id !== existing.id),
+          deletedEntries: upsertTombstone(prev.deletedEntries, existing.id, nextIso()),
+        }
       }
       if (existing.title === draft.title && existing.body === draft.body) return prev
       return {
         ...prev,
         entries: prev.entries.map((entry) =>
-          entry.id === existing.id ? { ...entry, title: draft.title, body: draft.body, updatedAt: nowIso() } : entry,
+          entry.id === existing.id ? { ...entry, title: draft.title, body: draft.body, updatedAt: nextIso() } : entry,
         ),
       }
     })
@@ -147,8 +177,8 @@ export function JournalProvider({ children }: { children: ReactNode }) {
   const publishDay = useCallback((bookId: string, date: string, draft: DayDraft) => {
     if (!draft.title.trim() || !draft.body.trim()) return
     setStore((prev) => {
-      const existing = prev.entries.find((entry) => entry.bookId === bookId && entry.date === date)
-      const publishedAt = existing?.publishedAt ?? nowIso()
+      const existing = primaryEntryFor(prev.entries, bookId, date)
+      const publishedAt = existing?.publishedAt ?? nextIso()
       if (!existing) {
         const created: Entry = {
           id: crypto.randomUUID(),
@@ -159,10 +189,14 @@ export function JournalProvider({ children }: { children: ReactNode }) {
           publishedTitle: draft.title,
           publishedBody: draft.body,
           status: 'published',
-          updatedAt: nowIso(),
+          updatedAt: nextIso(),
           publishedAt,
         }
-        return { ...prev, entries: [...prev.entries, created] }
+        return {
+          ...prev,
+          entries: [...prev.entries, created],
+          deletedEntries: prev.deletedEntries.filter((item) => item.id !== created.id),
+        }
       }
       return {
         ...prev,
@@ -175,7 +209,7 @@ export function JournalProvider({ children }: { children: ReactNode }) {
                 publishedTitle: draft.title,
                 publishedBody: draft.body,
                 status: 'published',
-                updatedAt: nowIso(),
+                updatedAt: nextIso(),
                 publishedAt,
               }
             : entry,
@@ -185,23 +219,32 @@ export function JournalProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const unpublishDay = useCallback((entryId: string) => {
-    setStore((prev) => ({
-      ...prev,
-      entries: prev.entries.flatMap((entry) => {
-        if (entry.id !== entryId) return [entry]
-        if (!entry.title.trim() && !entry.body.trim()) return []
-        return [
-          {
-            ...entry,
-            status: 'draft' as const,
-            publishedTitle: null,
-            publishedBody: null,
-            publishedAt: null,
-            updatedAt: nowIso(),
-          },
-        ]
-      }),
-    }))
+    setStore((prev) => {
+      const target = prev.entries.find((entry) => entry.id === entryId)
+      if (!target) return prev
+      if (!target.title.trim() && !target.body.trim()) {
+        return {
+          ...prev,
+          entries: prev.entries.filter((entry) => entry.id !== entryId),
+          deletedEntries: upsertTombstone(prev.deletedEntries, entryId, nextIso()),
+        }
+      }
+      return {
+        ...prev,
+        entries: prev.entries.map((entry) =>
+          entry.id === entryId
+            ? {
+                ...entry,
+                status: 'draft' as const,
+                publishedTitle: null,
+                publishedBody: null,
+                publishedAt: null,
+                updatedAt: nextIso(),
+              }
+            : entry,
+        ),
+      }
+    })
   }, [])
 
   const value = useMemo<JournalContextValue>(

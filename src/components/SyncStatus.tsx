@@ -27,7 +27,12 @@ function describe(status: FolderSyncStatus, folderName: string | null, lastSynce
           'Choose the Google Drive folder on this computer to keep a copy of every book and entry on disk.',
       }
     case 'connecting':
-      return { title: 'Choosing a folder…', detail: 'Pick the folder Google Drive keeps on this computer.' }
+      return folderName
+        ? {
+            title: `Connecting to ${folderName}…`,
+            detail: 'Checking folder access before syncing.',
+          }
+        : { title: 'Choosing a folder…', detail: 'Pick the folder Google Drive keeps on this computer.' }
     case 'needs-permission':
       return {
         title: folderName ? `Access to ${folderName} is paused` : 'Folder access is paused',

@@ -1,8 +1,10 @@
-import { cleanStore } from './storage.ts'
-import type { Store } from './types.ts'
+import { advanceClock, cleanStore, nextIso } from './storage.ts'
+import type { Book, Entry, Store, Tombstone } from './types.ts'
+import { isConflictId, rootEntryId } from './types.ts'
 
 export const SYNC_FILE = 'bookjournal.json'
 const META_KEY = 'bookjournal.sync.v1'
+const BASE_KEY = 'bookjournal.sync.base.v1'
 const DB_NAME = 'bookjournal.files'
 const DB_VERSION = 1
 const HANDLE_STORE = 'handles'
@@ -11,6 +13,18 @@ const HANDLE_KEY = 'sync-folder'
 export type SyncMeta = {
   folderName: string
   lastSyncedAt: string | null
+}
+
+export type SnapshotRead =
+  | { status: 'missing' }
+  | { status: 'ready'; store: Store; savedAt: string | null }
+  | { status: 'unreadable'; detail: string }
+
+export class SnapshotUnreadableError extends Error {
+  constructor(detail: string) {
+    super(detail)
+    this.name = 'SnapshotUnreadableError'
+  }
 }
 
 export function syncSupported() {
@@ -35,6 +49,21 @@ export function loadSyncMeta(): SyncMeta | null {
 export function saveSyncMeta(meta: SyncMeta | null) {
   if (!meta) localStorage.removeItem(META_KEY)
   else localStorage.setItem(META_KEY, JSON.stringify(meta))
+}
+
+export function loadSyncBase(): Store | null {
+  try {
+    const raw = localStorage.getItem(BASE_KEY)
+    if (!raw) return null
+    return cleanStore(JSON.parse(raw))
+  } catch {
+    return null
+  }
+}
+
+export function saveSyncBase(store: Store | null) {
+  if (!store) localStorage.removeItem(BASE_KEY)
+  else localStorage.setItem(BASE_KEY, JSON.stringify(store))
 }
 
 export function pickSyncFolder() {
@@ -103,6 +132,8 @@ export async function writeSnapshot(handle: FileSystemDirectoryHandle, store: St
           savedAt,
           books: store.books,
           entries: store.entries,
+          deletedBooks: store.deletedBooks,
+          deletedEntries: store.deletedEntries,
         },
         null,
         2,
@@ -116,23 +147,344 @@ export async function writeSnapshot(handle: FileSystemDirectoryHandle, store: St
   return savedAt
 }
 
-export async function readSnapshot(handle: FileSystemDirectoryHandle) {
+function looksLikeSnapshot(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object') return false
+  const record = value as Record<string, unknown>
+  return Array.isArray(record.books) || Array.isArray(record.entries) || record.app === 'BookJournal'
+}
+
+export function classifySnapshotText(text: string): SnapshotRead {
+  // Zero-byte files can be left behind by a failed write; treat them as missing so sync can recover.
+  if (!text.trim()) return { status: 'missing' }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return {
+      status: 'unreadable',
+      detail: 'The backup file is damaged or incomplete. Sync paused so it is not overwritten.',
+    }
+  }
+  if (!looksLikeSnapshot(parsed)) {
+    return {
+      status: 'unreadable',
+      detail: 'The backup file is not a BookJournal snapshot. Sync paused so it is not overwritten.',
+    }
+  }
+  return {
+    status: 'ready',
+    store: cleanStore(parsed),
+    savedAt: typeof (parsed as { savedAt?: unknown }).savedAt === 'string' ? (parsed as { savedAt: string }).savedAt : null,
+  }
+}
+
+export async function readSnapshot(handle: FileSystemDirectoryHandle): Promise<SnapshotRead> {
   let file: FileSystemFileHandle
   try {
     file = await handle.getFileHandle(SYNC_FILE)
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'NotFoundError') return null
+    if (error instanceof DOMException && error.name === 'NotFoundError') return { status: 'missing' }
     throw error
   }
-  const text = await (await file.getFile()).text()
-  if (!text.trim()) return null
-  try {
-    const parsed = JSON.parse(text) as { savedAt?: unknown }
-    return {
-      store: cleanStore(parsed),
-      savedAt: typeof parsed.savedAt === 'string' ? parsed.savedAt : null,
-    }
-  } catch {
-    return null
+  return classifySnapshotText(await (await file.getFile()).text())
+}
+
+function mergeTombstones(local: Tombstone[], remote: Tombstone[]) {
+  const byId = new Map<string, Tombstone>()
+  for (const item of [...remote, ...local]) {
+    const previous = byId.get(item.id)
+    if (!previous || item.deletedAt > previous.deletedAt) byId.set(item.id, item)
   }
+  return byId
+}
+
+function newerByUpdatedAt<T extends { updatedAt: string }>(a: T, b: T) {
+  return a.updatedAt >= b.updatedAt ? a : b
+}
+
+function entryFingerprint(entry: Entry) {
+  return JSON.stringify({
+    bookId: entry.bookId,
+    date: entry.date,
+    title: entry.title,
+    body: entry.body,
+    publishedTitle: entry.publishedTitle,
+    publishedBody: entry.publishedBody,
+    status: entry.status,
+  })
+}
+
+/** Stable content identity for deduping conflict copies across retries. */
+function recoverableContentKey(entry: Entry) {
+  return JSON.stringify({
+    bookId: entry.bookId,
+    date: entry.date,
+    title: entry.title.replace(/^\[Conflict\]\s+/, ''),
+    body: entry.body,
+    publishedTitle: entry.publishedTitle?.replace(/^\[Conflict\]\s+/, '') ?? null,
+    publishedBody: entry.publishedBody,
+    status: entry.status,
+  })
+}
+
+function combineText(primary: string, secondary: string, label: string) {
+  const left = primary.trim()
+  const right = secondary.trim()
+  if (!right || left === right) return primary
+  if (!left) return secondary
+  return `${left}\n\n---\n${label}\n\n${right}`
+}
+
+/** Fold a divergent same-id (or legacy conflict) loser into the visible root draft body. */
+function foldLoserIntoRootDraft(winner: Entry, loser: Entry): Entry {
+  let body = combineText(winner.body, loser.body, '[Conflict from other device]')
+  const loserPublished = loser.publishedBody?.trim() ?? ''
+  if (loserPublished && loserPublished !== loser.body.trim() && !body.includes(loserPublished)) {
+    body = combineText(body, loserPublished, '[Conflict published from other device]')
+  }
+  return {
+    ...winner,
+    body,
+    // Keep the root's published snapshot until the user republishes.
+    publishedTitle: winner.publishedTitle,
+    publishedBody: winner.publishedBody,
+    publishedAt: winner.publishedAt,
+    status: winner.status,
+    updatedAt: winner.updatedAt >= loser.updatedAt ? winner.updatedAt : loser.updatedAt,
+  }
+}
+
+function changedFromBase(entry: Entry, baseEntry: Entry | undefined) {
+  if (!baseEntry) return true
+  return entryFingerprint(entry) !== entryFingerprint(baseEntry)
+}
+
+function orderBooks(local: Book[], remote: Book[], booksById: Map<string, Book>) {
+  const books: Book[] = []
+  const seen = new Set<string>()
+  for (const book of local) {
+    const merged = booksById.get(book.id)
+    if (!merged || seen.has(book.id)) continue
+    books.push(merged)
+    seen.add(book.id)
+  }
+  for (const book of remote) {
+    if (seen.has(book.id)) continue
+    const merged = booksById.get(book.id)
+    if (!merged) continue
+    books.push(merged)
+    seen.add(book.id)
+  }
+  return books
+}
+
+function foldTwo(winner: Entry, loser: Entry): Entry {
+  const publishedBody =
+    winner.publishedBody?.trim()
+      ? loser.publishedBody?.trim() && loser.publishedBody.trim() !== winner.publishedBody.trim()
+        ? combineText(winner.publishedBody, loser.publishedBody, '[Conflict published from other device]')
+        : winner.publishedBody
+      : loser.publishedBody
+  const publishedTitle =
+    winner.publishedTitle?.trim()
+      ? loser.publishedTitle?.trim() && loser.publishedTitle.trim() !== winner.publishedTitle.trim()
+        ? `${winner.publishedTitle} / ${loser.publishedTitle}`
+        : winner.publishedTitle
+      : loser.publishedTitle
+
+  let body = combineText(winner.body, loser.body, '[Conflict from other device]')
+  if (loser.publishedBody?.trim() && loser.publishedBody.trim() !== loser.body.trim()) {
+    body = combineText(body, loser.publishedBody, '[Conflict published from other device]')
+  }
+  if (winner.publishedBody?.trim() && winner.publishedBody.trim() !== winner.body.trim() && publishedBody !== winner.publishedBody) {
+    // winner published already represented in publishedBody field
+  }
+
+  const title =
+    winner.title.trim() === loser.title.trim()
+      ? winner.title
+      : [winner.title.trim(), loser.title.trim()].filter(Boolean).join(' / ')
+
+  const published = Boolean(publishedBody?.trim() || publishedTitle?.trim())
+  return {
+    ...winner,
+    title,
+    body,
+    publishedTitle: published ? publishedTitle : null,
+    publishedBody: published ? publishedBody : null,
+    publishedAt: winner.publishedAt ?? loser.publishedAt,
+    status: published ? 'published' : winner.status === 'published' || loser.status === 'published' ? 'published' : 'draft',
+    updatedAt: winner.updatedAt >= loser.updatedAt ? winner.updatedAt : loser.updatedAt,
+  }
+}
+
+function foldSameDayEntries(entries: Entry[], deletedEntries: Map<string, Tombstone>) {
+  const conflicts: Entry[] = []
+  const primary: Entry[] = []
+  for (const entry of entries) {
+    if (isConflictId(entry.id)) conflicts.push(entry)
+    else primary.push(entry)
+  }
+
+  const byDay = new Map<string, Entry[]>()
+  for (const entry of primary) {
+    const key = `${entry.bookId}:${entry.date}`
+    const list = byDay.get(key)
+    if (list) list.push(entry)
+    else byDay.set(key, [entry])
+  }
+
+  const folded: Entry[] = []
+  const now = nextIso()
+  for (const group of byDay.values()) {
+    if (group.length === 1) {
+      folded.push(group[0])
+      continue
+    }
+    group.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    let winner = group[0]
+    for (const loser of group.slice(1)) {
+      if (entryFingerprint(winner) === entryFingerprint(loser)) {
+        deletedEntries.set(loser.id, { id: loser.id, deletedAt: now })
+        continue
+      }
+      winner = foldTwo(winner, loser)
+      deletedEntries.set(loser.id, { id: loser.id, deletedAt: now })
+    }
+    folded.push(winner)
+  }
+
+  // Absorb legacy __conflict__ copies into the visible primary, then tombstone them.
+  for (const conflict of conflicts) {
+    const rootId = rootEntryId(conflict.id)
+    const index = folded.findIndex(
+      (entry) => entry.id === rootId || (entry.bookId === conflict.bookId && entry.date === conflict.date),
+    )
+    if (index === -1) {
+      // No root left — promote recoverable text onto the root id so it stays editable.
+      folded.push({
+        ...conflict,
+        id: rootId,
+        title: conflict.title.replace(/^\[Conflict\]\s+/, '') || conflict.title,
+      })
+      deletedEntries.set(conflict.id, { id: conflict.id, deletedAt: now })
+      continue
+    }
+    const target = folded[index]
+    if (!alreadyPreserves(new Map([[target.id, target]]), conflict)) {
+      folded[index] = foldLoserIntoRootDraft(target, conflict)
+    }
+    deletedEntries.set(conflict.id, { id: conflict.id, deletedAt: now })
+  }
+
+  return folded
+}
+
+function alreadyPreserves(entries: Map<string, Entry>, loser: Entry) {
+  const key = recoverableContentKey(loser)
+  const loserBody = loser.body.trim()
+  const loserPublished = loser.publishedBody?.trim() ?? ''
+  for (const entry of entries.values()) {
+    if (entry.id === loser.id) continue
+    if (recoverableContentKey(entry) === key) return true
+    const sameDay = entry.bookId === loser.bookId && entry.date === loser.date
+    const relatedConflict = isConflictId(entry.id) && rootEntryId(entry.id) === rootEntryId(loser.id)
+    if (!sameDay && !relatedConflict) continue
+    if (!loserBody || !entry.body.includes(loserBody)) continue
+    if (!loserPublished || entry.body.includes(loserPublished) || entry.publishedBody?.includes(loserPublished)) {
+      return true
+    }
+  }
+  return false
+}
+
+export function mergeStores(local: Store, remote: Store, base: Store | null = null): Store {
+  advanceClock(local)
+  advanceClock(remote)
+  if (base) advanceClock(base)
+
+  const deletedBooks = mergeTombstones(local.deletedBooks, remote.deletedBooks)
+  const deletedEntries = mergeTombstones(local.deletedEntries, remote.deletedEntries)
+  const baseEntries = new Map((base?.entries ?? []).map((entry) => [entry.id, entry]))
+
+  const remoteBooks = new Map(remote.books.map((book) => [book.id, book]))
+  const localBooks = new Map(local.books.map((book) => [book.id, book]))
+  const booksById = new Map<string, Book>()
+
+  for (const id of new Set([...remoteBooks.keys(), ...localBooks.keys()])) {
+    if (deletedBooks.has(id)) continue
+    const left = localBooks.get(id)
+    const right = remoteBooks.get(id)
+    const candidate = left && right ? newerByUpdatedAt(left, right) : (left ?? right)
+    if (!candidate) continue
+    booksById.set(id, candidate)
+  }
+
+  const remoteEntries = new Map(remote.entries.map((entry) => [entry.id, entry]))
+  const localEntries = new Map(local.entries.map((entry) => [entry.id, entry]))
+  const entriesById = new Map<string, Entry>()
+
+  for (const id of new Set([...remoteEntries.keys(), ...localEntries.keys()])) {
+    if (deletedEntries.has(id)) continue
+
+    if (isConflictId(id)) {
+      const existing = localEntries.get(id) ?? remoteEntries.get(id)
+      if (existing && booksById.has(existing.bookId)) entriesById.set(id, existing)
+      continue
+    }
+
+    const left = localEntries.get(id)
+    const right = remoteEntries.get(id)
+    if (left && right) {
+      if (!booksById.has(left.bookId) && !booksById.has(right.bookId)) continue
+      if (entryFingerprint(left) === entryFingerprint(right)) {
+        const winner = newerByUpdatedAt(left, right)
+        if (booksById.has(winner.bookId)) entriesById.set(id, winner)
+        continue
+      }
+
+      // With a known base: only one side changed → take that side (ordinary edit, no conflict).
+      // With no base (first connect / lost meta): ancestry is unknown → keep both texts.
+      const localChanged = !base || changedFromBase(left, baseEntries.get(id))
+      const remoteChanged = !base || changedFromBase(right, baseEntries.get(id))
+      const unknownAncestryOrBothChanged = !base || (localChanged && remoteChanged)
+
+      if (unknownAncestryOrBothChanged) {
+        const winner = newerByUpdatedAt(left, right)
+        const loser = winner === left ? right : left
+        if (booksById.has(winner.bookId)) {
+          entriesById.set(
+            id,
+            alreadyPreserves(new Map([[winner.id, winner]]), loser)
+              ? winner
+              : foldLoserIntoRootDraft(winner, loser),
+          )
+        }
+        continue
+      }
+
+      const chosen = localChanged ? left : right
+      if (booksById.has(chosen.bookId)) entriesById.set(id, chosen)
+      continue
+    }
+
+    const entry = left ?? right
+    if (!entry) continue
+    if (!booksById.has(entry.bookId)) continue
+    entriesById.set(id, entry)
+  }
+
+  const folded = foldSameDayEntries([...entriesById.values()], deletedEntries)
+  const merged = {
+    books: orderBooks(local.books, remote.books, booksById),
+    entries: folded,
+    deletedBooks: [...deletedBooks.values()],
+    deletedEntries: [...deletedEntries.values()],
+  }
+  advanceClock(merged)
+  return merged
+}
+
+export function sameStore(a: Store, b: Store) {
+  return JSON.stringify(a) === JSON.stringify(b)
 }
