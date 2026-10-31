@@ -23,7 +23,7 @@ export function ManuscriptView({ bookId }: { bookId: string }) {
           <h2>{book.title}</h2>
           <p className="lede">
             {entries.length === 0
-              ? 'Nothing has been published yet. Days stay private in the journal until you add them to the book.'
+              ? 'No published days yet. Journal entries stay private until you add them to the book.'
               : `${entries.length === 1 ? '1 day' : `${entries.length} days`} · ${words.toLocaleString()} words${
                   entries.length > 0 ? ` · ${spanLabel(entries.map((entry) => entry.date))}` : ''
                 }`}
@@ -33,7 +33,7 @@ export function ManuscriptView({ bookId }: { bookId: string }) {
 
         {entries.length === 0 ? (
           <button type="button" className="btn quiet" onClick={() => openJournal(book.id)}>
-            Return to the journal
+            Open journal
           </button>
         ) : (
           <ol className="chapters">

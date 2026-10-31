@@ -20,7 +20,7 @@ export function BookChrome({
     <div className="workspace" data-pages={book.pages}>
       <header className="bookbar">
         <button type="button" className="text-button back" onClick={openLibrary}>
-          Shelf
+          ← Library
         </button>
         <div className="bookbar-title">
           <p className="eyebrow">{book.author || 'Unsigned'}</p>

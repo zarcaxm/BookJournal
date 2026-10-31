@@ -81,7 +81,7 @@ export function Composer({
           setBody(event.target.value)
           setNotice(null)
         }}
-        placeholder="What stayed with you? This remains a draft until you publish it to the book."
+        placeholder="Write today's entry. It stays a draft until you publish it to the book."
         spellCheck
         aria-label={`Thoughts for ${formatLong(date)}`}
       />

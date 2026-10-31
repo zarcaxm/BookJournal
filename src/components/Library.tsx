@@ -50,10 +50,9 @@ export function Library() {
       <header className="mast">
         <div>
           <p className="eyebrow">BookJournal</p>
-          <h1>A shelf of books you write by the day.</h1>
+          <h1>Write a book, one day at a time.</h1>
           <p className="lede">
-            Open a book and keep your thoughts on the calendar. Publish a day when it belongs in the manuscript.
-            Export a PDF when the book feels ready.
+            Journal into the calendar, publish days into the manuscript, and export a PDF when you are ready.
           </p>
         </div>
         <button type="button" className="btn primary" onClick={() => setCreating(true)}>
@@ -63,16 +62,16 @@ export function Library() {
 
       <p className="shelf-count">
         {books.length === 0
-          ? 'Kept in this browser.'
+          ? 'Stored locally in this browser.'
           : `${books.length === 1 ? '1 book' : `${books.length} books`}${
               publishedWords > 0 ? ` · ${publishedWords.toLocaleString()} published words` : ''
-            } · kept in this browser`}
+            } · stored locally`}
       </p>
 
       {books.length === 0 ? (
         <section className="empty-shelf">
-          <h2>The shelf is clear.</h2>
-          <p>Start a book, write into a day, and publish it when the page is finished.</p>
+          <h2>No books yet</h2>
+          <p>Create a book, write into a day, then publish it when the page is finished.</p>
         </section>
       ) : (
         <section className="shelf" aria-label="Books">

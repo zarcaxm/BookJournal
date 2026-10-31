@@ -13,7 +13,7 @@ export function NewBookDialog({ open, onClose, onCreate }: NewBookDialogProps) {
   const [title, setTitle] = useState('')
   const [author, setAuthor] = useState('')
   const [intention, setIntention] = useState('')
-  const [cover, setCover] = useState<CoverId>('oxblood')
+  const [cover, setCover] = useState<CoverId>('navy')
   const [pages, setPages] = useState<PageId>('cream')
 
   useEffect(() => {
@@ -31,7 +31,7 @@ export function NewBookDialog({ open, onClose, onCreate }: NewBookDialogProps) {
     setTitle('')
     setAuthor('')
     setIntention('')
-    setCover('oxblood')
+    setCover('navy')
     setPages('cream')
   }, [open])
 
@@ -54,14 +54,14 @@ export function NewBookDialog({ open, onClose, onCreate }: NewBookDialogProps) {
         }}
       >
         <p className="eyebrow">New book</p>
-        <h2>What will this book hold?</h2>
+        <h2>Create a book</h2>
         <label>
           Title
           <input
             required
             value={title}
             onChange={(event) => setTitle(event.target.value)}
-            placeholder="A year of small mornings"
+            placeholder="Working title"
           />
         </label>
         <label>
@@ -73,16 +73,16 @@ export function NewBookDialog({ open, onClose, onCreate }: NewBookDialogProps) {
           <textarea
             value={intention}
             onChange={(event) => setIntention(event.target.value)}
-            placeholder="A line about why you are keeping this book."
+            placeholder="Optional note on what this book is for."
             rows={3}
           />
         </label>
         <fieldset>
-          <legend>Pages</legend>
+          <legend>Page style</legend>
           <PagePicker value={pages} onChange={setPages} />
         </fieldset>
         <fieldset>
-          <legend>Cloth</legend>
+          <legend>Cover</legend>
           <div className="swatches">
             {COVERS.map((item) => (
               <button
