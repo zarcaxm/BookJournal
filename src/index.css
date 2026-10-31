@@ -182,9 +182,37 @@ h1, h2, .cover-title {
 }
 
 .shelf-count {
-  margin: 0 0 20px;
+  margin: 0;
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+.storage-bar {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: end;
+  margin: 0 0 28px;
+  padding: 16px 18px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.storage-hint {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
+  max-width: 42rem;
+}
+
+.storage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  flex-shrink: 0;
 }
 
 .shelf {
@@ -832,6 +860,11 @@ h1, h2, .cover-title {
   .library, .workspace {
     width: min(1080px, calc(100% - 28px));
     padding-top: 28px;
+  }
+
+  .storage-bar {
+    flex-direction: column;
+    align-items: start;
   }
 
   .mast, .bookbar, .desk, .composer-foot, .chapter-head {

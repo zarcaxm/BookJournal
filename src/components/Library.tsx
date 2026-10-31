@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { wordCount } from '../dates.ts'
 import { useJournal } from '../journal.tsx'
+import type { StorageInfo } from '../storage.ts'
 import { coverOf, entryHasWriting, entryInBook, entryIsDirty, pagesOf, type Book } from '../types.ts'
 import { ConfirmDialog } from './ConfirmDialog.tsx'
 import { NewBookDialog } from './NewBookDialog.tsx'
@@ -37,13 +38,46 @@ function BookCard({ book, onDelete }: { book: Book; onDelete: (book: Book) => vo
   )
 }
 
+function storageLabel(storage: StorageInfo) {
+  if (storage.mode === 'folder' && storage.folderName) {
+    return `Saved in folder “${storage.folderName}” as bookjournal.json`
+  }
+  if (storage.needsPermission && storage.folderName) {
+    return `Folder “${storage.folderName}” needs permission again`
+  }
+  return 'Stored in this browser until you choose a folder'
+}
+
 export function Library() {
-  const { books, entries, createBook, deleteBook } = useJournal()
+  const {
+    ready,
+    books,
+    entries,
+    createBook,
+    deleteBook,
+    storage,
+    saveError,
+    linkFolder,
+    reconnectFolder,
+    unlinkFolder,
+  } = useJournal()
   const [creating, setCreating] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<Book | null>(null)
+  const [storageBusy, setStorageBusy] = useState(false)
   const publishedWords = entries
     .filter((entry) => entry.status === 'published')
     .reduce((sum, entry) => sum + wordCount(entry.publishedBody ?? ''), 0)
+
+  async function runStorageAction(action: () => Promise<void>) {
+    setStorageBusy(true)
+    try {
+      await action()
+    } catch {
+      // saveError is set by the provider
+    } finally {
+      setStorageBusy(false)
+    }
+  }
 
   return (
     <main className="library">
@@ -55,18 +89,61 @@ export function Library() {
             Journal into the calendar, publish days into the manuscript, and export a PDF when you are ready.
           </p>
         </div>
-        <button type="button" className="btn primary" onClick={() => setCreating(true)}>
+        <button type="button" className="btn primary" onClick={() => setCreating(true)} disabled={!ready}>
           New book
         </button>
       </header>
 
-      <p className="shelf-count">
-        {books.length === 0
-          ? 'Stored locally in this browser.'
-          : `${books.length === 1 ? '1 book' : `${books.length} books`}${
-              publishedWords > 0 ? ` · ${publishedWords.toLocaleString()} published words` : ''
-            } · stored locally`}
-      </p>
+      <section className="storage-bar" aria-label="Storage">
+        <div>
+          <p className="shelf-count">
+            {!ready
+              ? 'Opening journal…'
+              : books.length === 0
+                ? storageLabel(storage)
+                : `${books.length === 1 ? '1 book' : `${books.length} books`}${
+                    publishedWords > 0 ? ` · ${publishedWords.toLocaleString()} published words` : ''
+                  } · ${storageLabel(storage)}`}
+          </p>
+          <p className="storage-hint">
+            Choose a folder to keep your journal as a file — a Google Drive sync folder works well.
+          </p>
+        </div>
+        <div className="storage-actions">
+          {storage.needsPermission ? (
+            <button
+              type="button"
+              className="btn"
+              disabled={!ready || storageBusy}
+              onClick={() => void runStorageAction(reconnectFolder)}
+            >
+              Reconnect folder
+            </button>
+          ) : null}
+          {storage.folderSupported ? (
+            <button
+              type="button"
+              className="btn"
+              disabled={!ready || storageBusy}
+              onClick={() => void runStorageAction(linkFolder)}
+            >
+              {storage.mode === 'folder' ? 'Change folder' : 'Save to folder'}
+            </button>
+          ) : null}
+          {storage.mode === 'folder' ? (
+            <button
+              type="button"
+              className="text-button"
+              disabled={!ready || storageBusy}
+              onClick={() => void runStorageAction(unlinkFolder)}
+            >
+              Use browser only
+            </button>
+          ) : null}
+        </div>
+      </section>
+
+      {saveError ? <p className="banner">{saveError}</p> : null}
 
       {books.length === 0 ? (
         <section className="empty-shelf">
@@ -85,7 +162,7 @@ export function Library() {
       <ConfirmDialog
         open={pendingDelete !== null}
         title={pendingDelete ? `Delete “${pendingDelete.title}”?` : 'Delete book?'}
-        body="The journal and the manuscript for this book will be removed from this browser."
+        body="The journal and the manuscript for this book will be removed from your storage."
         confirmLabel="Delete book"
         onConfirm={() => {
           if (pendingDelete) deleteBook(pendingDelete.id)

@@ -36,6 +36,7 @@ If you intentionally change dependencies, use `npm install` instead and commit t
 | `npm run build` | Type-check the project and create a production build in `dist/` |
 | `npm run preview` | Serve the contents of `dist/` locally for a production-build check |
 | `npm run lint` | Run Oxlint over the source code |
+| `npm test` | Run the Vitest unit and integration suite |
 
 To check the production build locally:
 
@@ -48,7 +49,9 @@ Then open the URL printed by Vite (normally `http://localhost:4173`). `vite prev
 
 ## Data and offline behavior
 
-Book and entry data is stored only in the browser's `localStorage`, under the key `bookjournal.v1`. It is not synced to a server and is specific to the browser profile and site origin. Clearing site data will remove the journal data for that origin, so export important manuscripts as PDFs before clearing browser storage.
+By default, book and entry data lives in the browser's `localStorage` under the key `bookjournal.v1`. From the library you can also choose a folder (Chrome or Edge) and keep the journal as `bookjournal.json` there — a Google Drive sync folder works well. The chosen folder handle is remembered in IndexedDB; if permission is lost, reconnect from the library. Browser storage remains a mirror and fallback.
+
+Nothing is uploaded to a BookJournal server. Clearing site data removes browser storage and the remembered folder link for that origin, so keep a folder backup or export important manuscripts as PDFs before clearing site data.
 
 The PWA service worker caches the built application for offline use and checks for updates automatically. PWA installation and service workers require HTTPS in production; `localhost` is treated as a secure context during development. The UI uses Google Fonts, so the first load is best done with an internet connection; fetched font resources are cached by the service worker.
 

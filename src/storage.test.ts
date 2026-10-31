@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { loadStore, saveStore } from './storage.ts'
+import {
+  loadBrowserStore,
+  parseStore,
+  saveBrowserStore,
+  serializeStore,
+} from './storage.ts'
 import type { Store } from './types.ts'
 
 const KEY = 'bookjournal.v1'
@@ -40,24 +45,17 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('saveStore / loadStore', () => {
+describe('serializeStore / parseStore', () => {
   it('round-trips a valid store', () => {
-    saveStore(validStore)
-    expect(loadStore()).toEqual(validStore)
-  })
-
-  it('returns an empty store when nothing is saved', () => {
-    expect(loadStore()).toEqual({ books: [], entries: [] })
+    expect(parseStore(serializeStore(validStore))).toEqual(validStore)
   })
 
   it('returns an empty store for invalid JSON', () => {
-    localStorage.setItem(KEY, '{not-json')
-    expect(loadStore()).toEqual({ books: [], entries: [] })
+    expect(parseStore('{not-json')).toEqual({ books: [], entries: [] })
   })
 
   it('drops malformed books and orphaned entries', () => {
-    localStorage.setItem(
-      KEY,
+    const store = parseStore(
       JSON.stringify({
         books: [
           { id: 'book-1', title: 'Keep me', cover: 'navy', pages: 'cream', createdAt: '2024-01-01T00:00:00.000Z' },
@@ -88,7 +86,6 @@ describe('saveStore / loadStore', () => {
       }),
     )
 
-    const store = loadStore()
     expect(store.books).toHaveLength(1)
     expect(store.books[0]).toMatchObject({
       id: 'book-1',
@@ -111,8 +108,7 @@ describe('saveStore / loadStore', () => {
   })
 
   it('falls back to default cover/pages and draft status for bad values', () => {
-    localStorage.setItem(
-      KEY,
+    const store = parseStore(
       JSON.stringify({
         books: [{ id: 'book-1', title: 'Fallback', cover: 'neon', pages: 'parchment' }],
         entries: [
@@ -126,11 +122,26 @@ describe('saveStore / loadStore', () => {
       }),
     )
 
-    const store = loadStore()
     expect(store.books[0].cover).toBe('oxblood')
     expect(store.books[0].pages).toBe('cream')
     expect(store.entries[0].status).toBe('draft')
     expect(store.entries[0].title).toBe('')
     expect(store.entries[0].body).toBe('')
+  })
+})
+
+describe('saveBrowserStore / loadBrowserStore', () => {
+  it('round-trips a valid store through localStorage', () => {
+    saveBrowserStore(validStore)
+    expect(loadBrowserStore()).toEqual(validStore)
+  })
+
+  it('returns an empty store when nothing is saved', () => {
+    expect(loadBrowserStore()).toEqual({ books: [], entries: [] })
+  })
+
+  it('returns an empty store for invalid JSON', () => {
+    localStorage.setItem(KEY, '{not-json')
+    expect(loadBrowserStore()).toEqual({ books: [], entries: [] })
   })
 })

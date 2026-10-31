@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { JournalProvider, useJournal } from './journal.tsx'
@@ -12,6 +12,7 @@ function Harness() {
 
   return (
     <div>
+      <div data-testid="ready">{journal.ready ? 'yes' : 'no'}</div>
       <div data-testid="view">{journal.view.name}</div>
       <div data-testid="book-count">{journal.books.length}</div>
       <div data-testid="entry-count">{book ? journal.entriesFor(book.id).length : 0}</div>
@@ -121,12 +122,14 @@ function draft(title: string, body: string): DayDraft {
   return { title, body }
 }
 
-function renderJournal() {
-  return render(
+async function renderJournal() {
+  const result = render(
     <JournalProvider>
       <Harness />
     </JournalProvider>,
   )
+  await waitFor(() => expect(screen.getByTestId('ready')).toHaveTextContent('yes'))
+  return result
 }
 
 beforeEach(() => {
@@ -134,15 +137,15 @@ beforeEach(() => {
 })
 
 describe('JournalProvider', () => {
-  it('starts on the library with no books', () => {
-    renderJournal()
+  it('starts on the library with no books', async () => {
+    await renderJournal()
     expect(screen.getByTestId('view')).toHaveTextContent('library')
     expect(screen.getByTestId('book-count')).toHaveTextContent('0')
   })
 
   it('creates a trimmed book and opens its journal', async () => {
     const user = userEvent.setup()
-    renderJournal()
+    await renderJournal()
 
     await user.click(screen.getByRole('button', { name: 'create' }))
 
@@ -151,19 +154,21 @@ describe('JournalProvider', () => {
     expect(screen.getByTestId('book-pages')).toHaveTextContent('ruled')
     expect(screen.getByTestId('book-id')).not.toHaveTextContent('')
 
-    const saved = JSON.parse(localStorage.getItem('bookjournal.v1') ?? '{}') as {
-      books: Array<{ title: string; author: string; intention: string }>
-    }
-    expect(saved.books[0]).toMatchObject({
-      title: 'Field Notes',
-      author: 'André',
-      intention: 'Daily',
+    await waitFor(() => {
+      const saved = JSON.parse(localStorage.getItem('bookjournal.v1') ?? '{}') as {
+        books: Array<{ title: string; author: string; intention: string }>
+      }
+      expect(saved.books[0]).toMatchObject({
+        title: 'Field Notes',
+        author: 'André',
+        intention: 'Daily',
+      })
     })
   })
 
   it('navigates between library, journal, and manuscript', async () => {
     const user = userEvent.setup()
-    renderJournal()
+    await renderJournal()
     await user.click(screen.getByRole('button', { name: 'create' }))
 
     await user.click(screen.getByRole('button', { name: 'manuscript' }))
@@ -179,7 +184,7 @@ describe('JournalProvider', () => {
 
   it('saves, updates, and clears draft entries', async () => {
     const user = userEvent.setup()
-    renderJournal()
+    await renderJournal()
     await user.click(screen.getByRole('button', { name: 'create' }))
 
     await user.click(screen.getByRole('button', { name: 'save' }))
@@ -195,7 +200,7 @@ describe('JournalProvider', () => {
 
   it('does not create an entry for empty drafts', async () => {
     const user = userEvent.setup()
-    renderJournal()
+    await renderJournal()
     await user.click(screen.getByRole('button', { name: 'create' }))
     await user.click(screen.getByRole('button', { name: 'clear-whitespace' }))
 
@@ -204,7 +209,7 @@ describe('JournalProvider', () => {
 
   it('publishes entries and tracks dirty edits', async () => {
     const user = userEvent.setup()
-    renderJournal()
+    await renderJournal()
     await user.click(screen.getByRole('button', { name: 'create' }))
 
     await user.click(screen.getByRole('button', { name: 'publish-incomplete' }))
@@ -223,7 +228,7 @@ describe('JournalProvider', () => {
 
   it('unpublishes while keeping draft writing, or removes empty entries', async () => {
     const user = userEvent.setup()
-    renderJournal()
+    await renderJournal()
     await user.click(screen.getByRole('button', { name: 'create' }))
     await user.click(screen.getByRole('button', { name: 'publish' }))
 
@@ -240,7 +245,7 @@ describe('JournalProvider', () => {
 
   it('updates page style and deletes a book with its entries', async () => {
     const user = userEvent.setup()
-    renderJournal()
+    await renderJournal()
     await user.click(screen.getByRole('button', { name: 'create' }))
     await user.click(screen.getByRole('button', { name: 'save' }))
     await user.click(screen.getByRole('button', { name: 'pages' }))

@@ -1,15 +1,26 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createContext, useContext } from 'react'
 import { toDateKey } from './dates.ts'
-import { loadStore, saveStore } from './storage.ts'
+import {
+  chooseJournalFolder,
+  EMPTY_STORE,
+  getStorageInfo,
+  initStorage,
+  reconnectJournalFolder,
+  saveStore,
+  type StorageInfo,
+  useBrowserStorageOnly,
+} from './storage.ts'
 import type { Book, CoverId, DayDraft, Entry, PageId, View } from './types.ts'
 
 type JournalContextValue = {
+  ready: boolean
   books: Book[]
   entries: Entry[]
   view: View
   selectedDate: string
   saveError: string | null
+  storage: StorageInfo
   openLibrary: () => void
   openJournal: (bookId: string, date?: string) => void
   openManuscript: (bookId: string) => void
@@ -22,6 +33,9 @@ type JournalContextValue = {
   saveDay: (bookId: string, date: string, draft: DayDraft) => void
   publishDay: (bookId: string, date: string, draft: DayDraft) => void
   unpublishDay: (entryId: string) => void
+  linkFolder: () => Promise<void>
+  reconnectFolder: () => Promise<void>
+  unlinkFolder: () => Promise<void>
 }
 
 const JournalContext = createContext<JournalContextValue | null>(null)
@@ -31,19 +45,42 @@ function nowIso() {
 }
 
 export function JournalProvider({ children }: { children: ReactNode }) {
-  const [store, setStore] = useState(loadStore)
+  const [ready, setReady] = useState(false)
+  const [store, setStore] = useState(EMPTY_STORE)
   const [view, setView] = useState<View>({ name: 'library' })
   const [selectedDate, setSelectedDate] = useState(() => toDateKey(new Date()))
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [storage, setStorage] = useState<StorageInfo>(getStorageInfo)
 
   useEffect(() => {
-    try {
-      saveStore(store)
-      setSaveError(null)
-    } catch {
-      setSaveError('This browser could not store the latest change. The journal may be full.')
+    let cancelled = false
+    void initStorage().then(({ store: loaded, info }) => {
+      if (cancelled) return
+      setStore(loaded)
+      setStorage(info)
+      setReady(true)
+    })
+    return () => {
+      cancelled = true
     }
-  }, [store])
+  }, [])
+
+  useEffect(() => {
+    if (!ready) return
+    let cancelled = false
+    void saveStore(store)
+      .then(() => {
+        if (!cancelled) setSaveError(null)
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return
+        const message = error instanceof Error ? error.message : 'Could not save the journal.'
+        setSaveError(message)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [ready, store])
 
   const openLibrary = useCallback(() => setView({ name: 'library' }), [])
 
@@ -103,8 +140,8 @@ export function JournalProvider({ children }: { children: ReactNode }) {
   const publishedEntries = useCallback(
     (bookId: string) =>
       entriesFor(bookId).filter(
-      (entry) => entry.status === 'published' && Boolean(entry.publishedBody?.trim() || entry.publishedTitle?.trim()),
-    ),
+        (entry) => entry.status === 'published' && Boolean(entry.publishedBody?.trim() || entry.publishedTitle?.trim()),
+      ),
     [entriesFor],
   )
 
@@ -201,13 +238,49 @@ export function JournalProvider({ children }: { children: ReactNode }) {
     }))
   }, [])
 
+  const linkFolder = useCallback(async () => {
+    try {
+      const next = await chooseJournalFolder(store)
+      setStore(next.store)
+      setStorage(next.info)
+      setSaveError(null)
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return
+      const message = error instanceof Error ? error.message : 'Could not link that folder.'
+      setSaveError(message)
+      throw error
+    }
+  }, [store])
+
+  const reconnectFolder = useCallback(async () => {
+    try {
+      const next = await reconnectJournalFolder(store)
+      setStore(next.store)
+      setStorage(next.info)
+      setSaveError(null)
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return
+      const message = error instanceof Error ? error.message : 'Could not reconnect that folder.'
+      setSaveError(message)
+      throw error
+    }
+  }, [store])
+
+  const unlinkFolder = useCallback(async () => {
+    await useBrowserStorageOnly()
+    setStorage(getStorageInfo())
+    setSaveError(null)
+  }, [])
+
   const value = useMemo<JournalContextValue>(
     () => ({
+      ready,
       books: store.books,
       entries: store.entries,
       view,
       selectedDate,
       saveError,
+      storage,
       openLibrary,
       openJournal,
       openManuscript,
@@ -220,13 +293,18 @@ export function JournalProvider({ children }: { children: ReactNode }) {
       saveDay,
       publishDay,
       unpublishDay,
+      linkFolder,
+      reconnectFolder,
+      unlinkFolder,
     }),
     [
+      ready,
       store.books,
       store.entries,
       view,
       selectedDate,
       saveError,
+      storage,
       openLibrary,
       openJournal,
       openManuscript,
@@ -239,6 +317,9 @@ export function JournalProvider({ children }: { children: ReactNode }) {
       saveDay,
       publishDay,
       unpublishDay,
+      linkFolder,
+      reconnectFolder,
+      unlinkFolder,
     ],
   )
 
