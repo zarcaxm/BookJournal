@@ -14,6 +14,12 @@ dev-dist
 .tools
 *.local
 
+# Local journal data (do not commit writing)
+bookjournal.json
+.env
+.env.*
+!.env.example
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

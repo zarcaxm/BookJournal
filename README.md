@@ -47,13 +47,13 @@ npm run preview
 
 Then open the URL printed by Vite (normally `http://localhost:4173`). `vite preview` is intended for local verification, not as a production web server.
 
-## Data and offline behavior
+## Data, privacy, and offline behavior
 
 By default, book and entry data lives in the browser's `localStorage` under the key `bookjournal.v1`. From the library you can also choose a folder (Chrome or Edge) and keep the journal as `bookjournal.json` there — a Google Drive sync folder works well. The chosen folder handle is remembered in IndexedDB; if permission is lost, reconnect from the library. Browser storage remains a mirror and fallback.
 
-Nothing is uploaded to a BookJournal server. Clearing site data removes browser storage and the remembered folder link for that origin, so keep a folder backup or export important manuscripts as PDFs before clearing site data.
+Nothing is uploaded to a BookJournal server. There is no account system, analytics, or third-party tracking. Notion import and PDF export run entirely in the browser. Journal text is stored in plaintext on the device (and in any folder or cloud sync you choose), so treat shared computers and site-data clears accordingly — keep a folder backup or export manuscripts as PDFs before clearing site data. Do not commit `bookjournal.json` if you point folder storage at a git checkout; it is gitignored for that reason.
 
-The PWA service worker caches the built application for offline use and checks for updates automatically. PWA installation and service workers require HTTPS in production; `localhost` is treated as a secure context during development. The UI uses Google Fonts, so the first load is best done with an internet connection; fetched font resources are cached by the service worker.
+Fonts ship with the app (self-hosted via Fontsource), so the UI does not call Google Fonts or other font CDNs. The PWA service worker caches the built application — including those font files — for offline use and checks for updates automatically. PWA installation and service workers require HTTPS in production; `localhost` is treated as a secure context during development.
 
 ## Deployment
 
