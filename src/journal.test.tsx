@@ -38,6 +38,23 @@ function Harness() {
       >
         create
       </button>
+      <button
+        type="button"
+        onClick={() =>
+          journal.importBook({
+            title: 'Notion Import',
+            intention: 'From Notion',
+            cover: 'navy',
+            pages: 'press',
+            entries: [
+              { date: '2024-02-01', title: 'First', body: 'Imported page one.' },
+              { date: '2024-02-02', title: 'Second', body: 'Imported page two.' },
+            ],
+          })
+        }
+      >
+        import
+      </button>
       <button type="button" onClick={() => book && journal.openLibrary()}>
         library
       </button>
@@ -163,6 +180,21 @@ describe('JournalProvider', () => {
         intention: 'Daily',
       })
     })
+  })
+
+  it('imports a book with published entries without wiping the shelf', async () => {
+    const user = userEvent.setup()
+    await renderJournal()
+    await user.click(screen.getByRole('button', { name: 'create' }))
+    expect(screen.getByTestId('book-count')).toHaveTextContent('1')
+
+    await user.click(screen.getByRole('button', { name: 'import' }))
+
+    expect(screen.getByTestId('view')).toHaveTextContent('manuscript')
+    expect(screen.getByTestId('book-count')).toHaveTextContent('2')
+    expect(screen.getByTestId('entry-count')).toHaveTextContent('2')
+    expect(screen.getByTestId('published-count')).toHaveTextContent('2')
+    expect(screen.getByTestId('book-pages')).toHaveTextContent('press')
   })
 
   it('navigates between library, journal, and manuscript', async () => {

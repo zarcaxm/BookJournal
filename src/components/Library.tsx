@@ -4,6 +4,7 @@ import { useJournal } from '../journal.tsx'
 import type { StorageInfo } from '../storage.ts'
 import { coverOf, entryHasWriting, entryInBook, entryIsDirty, pagesOf, type Book } from '../types.ts'
 import { ConfirmDialog } from './ConfirmDialog.tsx'
+import { ImportNotionDialog } from './ImportNotionDialog.tsx'
 import { NewBookDialog } from './NewBookDialog.tsx'
 
 function volumeLabel(published: number, drafts: number) {
@@ -54,6 +55,7 @@ export function Library() {
     books,
     entries,
     createBook,
+    importBook,
     deleteBook,
     storage,
     saveError,
@@ -62,6 +64,7 @@ export function Library() {
     unlinkFolder,
   } = useJournal()
   const [creating, setCreating] = useState(false)
+  const [importing, setImporting] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<Book | null>(null)
   const [storageBusy, setStorageBusy] = useState(false)
   const publishedWords = entries
@@ -89,9 +92,14 @@ export function Library() {
             Journal into the calendar, publish days into the manuscript, and export a PDF when you are ready.
           </p>
         </div>
-        <button type="button" className="btn primary" onClick={() => setCreating(true)} disabled={!ready}>
-          New book
-        </button>
+        <div className="mast-actions">
+          <button type="button" className="btn quiet" onClick={() => setImporting(true)} disabled={!ready}>
+            Import from Notion
+          </button>
+          <button type="button" className="btn primary" onClick={() => setCreating(true)} disabled={!ready}>
+            New book
+          </button>
+        </div>
       </header>
 
       <section className="storage-bar" aria-label="Storage">
@@ -159,6 +167,14 @@ export function Library() {
       )}
 
       <NewBookDialog open={creating} onClose={() => setCreating(false)} onCreate={createBook} />
+      <ImportNotionDialog
+        open={importing}
+        onClose={() => setImporting(false)}
+        onImport={(input) => {
+          setImporting(false)
+          importBook(input)
+        }}
+      />
       <ConfirmDialog
         open={pendingDelete !== null}
         title={pendingDelete ? `Delete “${pendingDelete.title}”?` : 'Delete book?'}

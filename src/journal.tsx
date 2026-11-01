@@ -25,6 +25,13 @@ type JournalContextValue = {
   openJournal: (bookId: string, date?: string) => void
   openManuscript: (bookId: string) => void
   createBook: (input: { title: string; intention: string; cover: CoverId; pages: PageId }) => void
+  importBook: (input: {
+    title: string
+    intention: string
+    cover: CoverId
+    pages: PageId
+    entries: Array<{ date: string; title: string; body: string }>
+  }) => void
   setBookPages: (bookId: string, pages: PageId) => void
   deleteBook: (bookId: string) => void
   entryFor: (bookId: string, date: string) => Entry | undefined
@@ -107,6 +114,68 @@ export function JournalProvider({ children }: { children: ReactNode }) {
       setStore((prev) => ({ ...prev, books: [book, ...prev.books] }))
       setSelectedDate(toDateKey(new Date()))
       setView({ name: 'journal', bookId: book.id })
+    },
+    [],
+  )
+
+  const importBook = useCallback(
+    (input: {
+      title: string
+      intention: string
+      cover: CoverId
+      pages: PageId
+      entries: Array<{ date: string; title: string; body: string }>
+    }) => {
+      const bookId = crypto.randomUUID()
+      const stamp = nowIso()
+      const book: Book = {
+        id: bookId,
+        title: input.title.trim(),
+        author: '',
+        intention: input.intention.trim(),
+        cover: input.cover,
+        pages: input.pages,
+        createdAt: stamp,
+      }
+
+      const usedDates = new Set<string>()
+      const imported: Entry[] = []
+      for (const draft of input.entries) {
+        const title = draft.title.trim()
+        const body = draft.body.trim()
+        if (!title && !body) continue
+        let date = /^\d{4}-\d{2}-\d{2}$/.test(draft.date) ? draft.date : toDateKey(new Date())
+        if (usedDates.has(date)) {
+          const [y, m, d] = date.split('-').map(Number)
+          const cursor = new Date(y, m - 1, d)
+          while (usedDates.has(date)) {
+            cursor.setDate(cursor.getDate() + 1)
+            date = toDateKey(cursor)
+          }
+        }
+        usedDates.add(date)
+        imported.push({
+          id: crypto.randomUUID(),
+          bookId,
+          date,
+          title,
+          body,
+          publishedTitle: title || null,
+          publishedBody: body || null,
+          status: 'published',
+          updatedAt: stamp,
+          publishedAt: stamp,
+        })
+      }
+
+      setStore((prev) => ({
+        books: [book, ...prev.books],
+        entries: [...prev.entries, ...imported],
+      }))
+      const firstDate = imported.map((entry) => entry.date).sort()[0]
+      setSelectedDate(firstDate ?? toDateKey(new Date()))
+      if (imported.length > 0) setView({ name: 'manuscript', bookId })
+      else setView({ name: 'journal', bookId })
     },
     [],
   )
@@ -285,6 +354,7 @@ export function JournalProvider({ children }: { children: ReactNode }) {
       openJournal,
       openManuscript,
       createBook,
+      importBook,
       setBookPages,
       deleteBook,
       entryFor,
@@ -309,6 +379,7 @@ export function JournalProvider({ children }: { children: ReactNode }) {
       openJournal,
       openManuscript,
       createBook,
+      importBook,
       setBookPages,
       deleteBook,
       entryFor,
