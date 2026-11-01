@@ -59,34 +59,11 @@ The PWA service worker caches the built application for offline use and checks f
 
 Pushing to `main` (or publishing a GitHub Release, or running the workflow manually) builds and deploys `dist/` to **GitHub Pages** via [`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml). The workflow runs `npm ci`, `npm test`, and `npm run build`, then publishes with `actions/upload-pages-artifact` and `actions/deploy-pages`.
 
-Once Pages is enabled, the site URL is typically:
+Live site:
 
 `https://zarcaxm.github.io/BookJournal/`
 
-### One-time GitHub Pages setup
-
-This repository is currently **private**. GitHub returned `422 Your current plan does not support GitHub Pages for this repository` when enabling Pages. Before the workflow can publish, do one of:
-
-- make the repository **public**, or
-- use a GitHub plan that includes Pages for private repositories (Pages sites are still public on the internet).
-
-Then enable Pages with **GitHub Actions** as the source:
-
-```bash
-gh api --method POST repos/zarcaxm/BookJournal/pages \
-  -f build_type=workflow \
-  -f 'source[branch]=main' \
-  -f 'source[path]=/'
-```
-
-Or in the GitHub UI: **Settings → Pages → Build and deployment → Source: GitHub Actions**.
-
-After that, confirm a successful run under the **Actions** tab and the `github-pages` environment.
-
-**Hosting at `/`:** this PWA is configured for the domain root (`scope` / `start_url` `/`, Vite default `base`). Project Pages serves under `/BookJournal/` by default. For a correct production PWA either:
-
-- attach a **custom domain** on the Pages settings (recommended for root `/`), or
-- change Vite `base` and the PWA manifest paths to `/BookJournal/` if you stay on `*.github.io/BookJournal/`.
+CI sets `BASE_PATH` from `actions/configure-pages` so Vite and the PWA manifest target `/BookJournal/`. Local builds keep `base: '/'`. For a root-domain install via a custom domain, set `BASE_PATH=/` on the workflow build step if assets should resolve at `/`.
 
 ### Manual / other hosts
 

@@ -2,7 +2,11 @@ import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vitest/config'
 import { VitePWA } from 'vite-plugin-pwa'
 
+// GitHub project Pages serves under /BookJournal/; configure-pages sets BASE_PATH in CI.
+const base = process.env.BASE_PATH || '/'
+
 export default defineConfig({
+  base,
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
@@ -15,15 +19,15 @@ export default defineConfig({
       injectRegister: false,
       includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
       manifest: {
-        id: '/',
+        id: base,
         name: 'BookJournal',
         short_name: 'BookJournal',
         description: 'Write a book one day at a time.',
         theme_color: '#1f4f4a',
         background_color: '#e9edf1',
         display: 'standalone',
-        scope: '/',
-        start_url: '/',
+        scope: base,
+        start_url: base,
         lang: 'en',
         icons: [
           { src: 'pwa-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
