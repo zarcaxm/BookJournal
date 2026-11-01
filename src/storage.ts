@@ -351,7 +351,7 @@ export async function reconnectJournalFolder(current: Store): Promise<{ store: S
   }
 }
 
-export async function useBrowserStorageOnly() {
+export async function unlinkJournalFolder() {
   directoryHandle = null
   await clearDirectoryHandle()
 }

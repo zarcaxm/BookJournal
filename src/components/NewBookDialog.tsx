@@ -5,13 +5,12 @@ import { PagePicker } from './PagePicker.tsx'
 type NewBookDialogProps = {
   open: boolean
   onClose: () => void
-  onCreate: (input: { title: string; author: string; intention: string; cover: CoverId; pages: PageId }) => void
+  onCreate: (input: { title: string; intention: string; cover: CoverId; pages: PageId }) => void
 }
 
 export function NewBookDialog({ open, onClose, onCreate }: NewBookDialogProps) {
   const ref = useRef<HTMLDialogElement>(null)
   const [title, setTitle] = useState('')
-  const [author, setAuthor] = useState('')
   const [intention, setIntention] = useState('')
   const [cover, setCover] = useState<CoverId>('navy')
   const [pages, setPages] = useState<PageId>('cream')
@@ -29,7 +28,6 @@ export function NewBookDialog({ open, onClose, onCreate }: NewBookDialogProps) {
   useEffect(() => {
     if (!open) return
     setTitle('')
-    setAuthor('')
     setIntention('')
     setCover('navy')
     setPages('cream')
@@ -50,7 +48,7 @@ export function NewBookDialog({ open, onClose, onCreate }: NewBookDialogProps) {
           event.preventDefault()
           if (!title.trim()) return
           ref.current?.close()
-          onCreate({ title, author, intention, cover, pages })
+          onCreate({ title, intention, cover, pages })
         }}
       >
         <p className="eyebrow">New book</p>
@@ -63,10 +61,6 @@ export function NewBookDialog({ open, onClose, onCreate }: NewBookDialogProps) {
             onChange={(event) => setTitle(event.target.value)}
             placeholder="Working title"
           />
-        </label>
-        <label>
-          Author
-          <input value={author} onChange={(event) => setAuthor(event.target.value)} placeholder="Your name" />
         </label>
         <label>
           Intention

@@ -626,14 +626,15 @@ h1, h2, .cover-title {
 
 .workspace[data-pages='ruled'] .composer textarea {
   margin: 10px 0 0 8px;
-  padding: 0 0 0 16px;
+  /* Sit glyphs on the rule: pad by half the spare line-box height */
+  padding: 8px 0 0 16px;
   border-left: 1px solid rgba(184, 78, 74, 0.75);
   border-radius: 0;
   line-height: 32px;
   font-size: 1rem;
-  background-origin: content-box;
+  background-origin: padding-box;
   background-attachment: local;
-  background-position: 0 10px;
+  background-position: 0 0;
   background-image: repeating-linear-gradient(
     to bottom,
     transparent 0,

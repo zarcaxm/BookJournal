@@ -30,7 +30,6 @@ function Harness() {
         onClick={() =>
           journal.createBook({
             title: '  Field Notes  ',
-            author: '  André  ',
             intention: '  Daily  ',
             cover: 'forest',
             pages: 'ruled',
@@ -160,7 +159,7 @@ describe('JournalProvider', () => {
       }
       expect(saved.books[0]).toMatchObject({
         title: 'Field Notes',
-        author: 'André',
+        author: '',
         intention: 'Daily',
       })
     })

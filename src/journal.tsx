@@ -9,7 +9,7 @@ import {
   reconnectJournalFolder,
   saveStore,
   type StorageInfo,
-  useBrowserStorageOnly,
+  unlinkJournalFolder,
 } from './storage.ts'
 import type { Book, CoverId, DayDraft, Entry, PageId, View } from './types.ts'
 
@@ -24,7 +24,7 @@ type JournalContextValue = {
   openLibrary: () => void
   openJournal: (bookId: string, date?: string) => void
   openManuscript: (bookId: string) => void
-  createBook: (input: { title: string; author: string; intention: string; cover: CoverId; pages: PageId }) => void
+  createBook: (input: { title: string; intention: string; cover: CoverId; pages: PageId }) => void
   setBookPages: (bookId: string, pages: PageId) => void
   deleteBook: (bookId: string) => void
   entryFor: (bookId: string, date: string) => Entry | undefined
@@ -94,11 +94,11 @@ export function JournalProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const createBook = useCallback(
-    (input: { title: string; author: string; intention: string; cover: CoverId; pages: PageId }) => {
+    (input: { title: string; intention: string; cover: CoverId; pages: PageId }) => {
       const book: Book = {
         id: crypto.randomUUID(),
         title: input.title.trim(),
-        author: input.author.trim(),
+        author: '',
         intention: input.intention.trim(),
         cover: input.cover,
         pages: input.pages,
@@ -267,7 +267,7 @@ export function JournalProvider({ children }: { children: ReactNode }) {
   }, [store])
 
   const unlinkFolder = useCallback(async () => {
-    await useBrowserStorageOnly()
+    await unlinkJournalFolder()
     setStorage(getStorageInfo())
     setSaveError(null)
   }, [])
